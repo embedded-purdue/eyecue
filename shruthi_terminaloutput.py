@@ -102,6 +102,20 @@ while True:
     if results.multi_face_landmarks:
         landmarks = results.multi_face_landmarks[0].landmark
         gaze_data = extract_gaze_numbers(landmarks, frame.shape)
+
+        # Get iris centers from the data we already calculated
+        left_iris_x = sum([landmarks[i].x for i in LEFT_IRIS]) / len(LEFT_IRIS)
+        left_iris_y = sum([landmarks[i].y for i in LEFT_IRIS]) / len(LEFT_IRIS)
+        right_iris_x = sum([landmarks[i].x for i in RIGHT_IRIS]) / len(RIGHT_IRIS)
+        right_iris_y = sum([landmarks[i].y for i in RIGHT_IRIS]) / len(RIGHT_IRIS)
+        
+        # Convert to pixel coordinates
+        left_center_px = (int(left_iris_x * frame.shape[1]), int(left_iris_y * frame.shape[0]))
+        right_center_px = (int(right_iris_x * frame.shape[1]), int(right_iris_y * frame.shape[0]))
+
+        # Draw green dots
+        cv2.circle(frame, left_center_px, 5, (0, 255, 0), -1)
+        cv2.circle(frame, right_center_px, 5, (0, 255, 0), -1)
         
         # Print every 30 frames
         frame_count += 1

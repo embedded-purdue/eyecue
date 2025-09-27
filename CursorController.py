@@ -9,47 +9,57 @@ position of the eye at any given time, and head angles at any given
 time (from gyro) to calculate the correct position of the mouse on the
 screen.
 
+Assumptions:
+    - face is centered compared to screen left-to-right and camera left-to-right
+    (this assumption only holds up using a webcam, not glasses likely)
+    
+
 
 """
 import pyautogui
 import math
+import numpy as np
 
 
 class CursorController:
-    # Class attributes
-    frameRate = 30
-    tlVect, trVect, blVect, brVect = [], [], [], []
-    targetScreenPosition = []
-    screenWidth, screenHeight = 0, 0
 
     # Constructor method
-    def __init__(self, topLeftVector, topRightVector, bottomLeftVector, bottomRightVector):
-        self.tlVect = topLeftVector
-        self.trVect = topRightVector
-        self.blVect = bottomLeftVector
-        self.brVect = bottomRightVector 
+    def __init__(self, leftAngle, rightAngle, topAngle, bottomAngle, gyroH, gyroV):
+        self.frameRate = 2
         self.screenWidth, self.screenHeight = pyautogui.size()
         
-    def update_target(self, visionVector, headRotationHoriz):
+        self.screenDistance = self.screenWidth / (2 * math.tan(abs(leftAngle - rightAngle)/2))
+        top = self.screenDistance * math.tan(topAngle)
+        bottom = self.screenDistance * math.tan(bottomAngle)
+        self.vertDisplacement = top - bottom
+        self.gyroCenter = [gyroH, gyroV]
+        
+    
+    # takes angle of vision (angle H - horizontal, angleV - vertical) in degrees
+    # takes angle of head (gyroH, gyroV) in degrees
+    def update_target(self, angleH, angleV, gyroH, gyroV):
         
         # convert horizontal and vertical rotations to radians
+        angleH *= math.pi / 180
+        angleV *= math.pi / 180
         
-        # account for horizontal head rotation     
-        rawVector = visionVector
-        visionVector[0] = ((rawVector[0] * math.cos(headRotationHoriz)) - 
-                           (rawVector[2] * math.sin(headRotationHoriz)))
-        visionVector[2] = ((rawVector[0] * math.sin(headRotationHoriz)) + 
-                           (rawVector[2] * math.cos(headRotationHoriz)))
+        # account for head rotation
+        angleH += (gyroH - self.gyroCenter[0]) * math.pi / 180
+        angleV += (gyroV - self.gyroCenter[1]) * math.pi / 180
         
-        # find target on screen
-        x_top = (visionVector[0] - self.tlVect[0]) / (self.trVect[0] - self.tlVect[0])
-        x_bottom = (visionVector[0] - self.blVect[0]) / (self.brVect[0] - self.blVect[0])
-        y_left = (visionVector[0] - self.tlVect[0]) / (self.blVect[0] - self.tlVect[0])
-        y_right = (visionVector[0] - self.trVect[0]) / (self.brVect[0] - self.trVect[0])
-        self.targetScreenPosition = [self.screenWidth * (x_top + x_bottom) / 2, 
-                                self.screenHeight * (y_left + y_right) / 2]
+        # gaze vector
+        unitVector = np.array([
+            np.sin(angleH) * np.cos(angleV),   # x-component
+            np.cos(angleH) * np.cos(angleV),   # y-component
+            np.sin(angleV)                     # z-component
+        ])
         
-
-    # Regular methods
-    def update_mouse(self):
+        # scale unit vector according to distance from screen
+        scaleFactor = self.screenDistance
+        
+        # calculate position in coordinates
+        x = (unitVector[0] * scaleFactor) + (self.screenWidth / 2)
+        y = (unitVector[2] * scaleFactor) + self.vertDisplacement + (self.screenHeight/2)
+        
         pyautogui.moveTo(self.targetScreenPosition[0], self.targetScreenPosition[1], duration=1.0/self.frameRate)
+        

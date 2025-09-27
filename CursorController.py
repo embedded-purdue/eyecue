@@ -61,5 +61,5 @@ class CursorController:
         x = (unitVector[0] * scaleFactor) + (self.screenWidth / 2)
         y = (unitVector[2] * scaleFactor) + self.vertDisplacement + (self.screenHeight/2)
         
-        pyautogui.moveTo(self.targetScreenPosition[0], self.targetScreenPosition[1], duration=1.0/self.frameRate)
+        pyautogui.moveTo(x, z, duration=1.0/self.frameRate)
         

@@ -7,7 +7,7 @@ import queue
 
 class BlinkDetector:
     def __init__(self):
-        # MediaPipe setup (proven reliable settings)
+        # MediaPipe setup 
         mp_face_mesh = mp.solutions.face_mesh
         self.face_mesh = mp_face_mesh.FaceMesh(
             max_num_faces=1,
@@ -17,7 +17,7 @@ class BlinkDetector:
         )
 
         # Enhanced eye landmark tracking for full eyelid detection
-        # Core EAR landmarks (research-validated)
+        # Core EAR landmarks 
         self.LEFT_EYE_IDX = [33, 159, 158, 133, 153, 145]      # Standard EAR points
         self.RIGHT_EYE_IDX = [362, 380, 374, 263, 386, 385]    # Standard EAR points
         
@@ -27,7 +27,7 @@ class BlinkDetector:
         self.RIGHT_UPPER_LID = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]  # Upper eyelid
         self.RIGHT_LOWER_LID = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]  # Lower eyelid
         
-        # Iris tracking (kept for green dot visualization)
+        # Iris tracking (green dot visualization)
         self.LEFT_IRIS = [474, 475, 476, 477]
         self.RIGHT_IRIS = [469, 470, 471, 472]
 
@@ -58,7 +58,7 @@ class BlinkDetector:
         self.velocity_history = []                      # Eye movement velocity tracking
         self.last_ear_value = 0.3                       # Previous EAR for velocity calculation
         
-        # Queue data structure (team requirement)
+        # Queue data structure 
         self.blink_queue = queue.Queue(maxsize=10)
         
         # Adrian Rosebrock frame counting
@@ -72,6 +72,7 @@ class BlinkDetector:
         # Output flags
         self.double_detected = False
         self.triple_detected = False
+        self.pending_double_blink_time = 0  # Track potential double blink for delay
         
         # Visual animation variables
         self.show_double_animation = False
@@ -82,7 +83,7 @@ class BlinkDetector:
     def calculate_enhanced_ear(self, core_landmarks, upper_lid, lower_lid, landmarks):
         """Enhanced EAR calculation using full eyelid tracking for maximum accuracy"""
         try:
-            # Standard EAR calculation (research-backed)
+            # Standard EAR calculation
             core_points = np.array([[landmarks[i].x, landmarks[i].y] for i in core_landmarks])
             vertical_dist1 = np.linalg.norm(core_points[1] - core_points[5])
             vertical_dist2 = np.linalg.norm(core_points[2] - core_points[4])
@@ -180,8 +181,6 @@ class BlinkDetector:
             enhanced_threshold *= 0.9  # Lower threshold for rapid movements
         if acceleration > self.NYSTROM_ACCELERATION_THRESHOLD:
             enhanced_threshold *= 1.1  # Higher threshold for high acceleration
-        
-        # Debug output removed for cleaner output
 
         # Enhanced blink state machine with academic validation
         if smoothed_ear < enhanced_threshold:
@@ -206,13 +205,11 @@ class BlinkDetector:
                     self.total_blinks += 1
                     self.blink_times.append(current_time)
                     
-                    # No debug output - just pattern detection
-                    
-                    # Add to queue (team requirement: FIFO data structure)
+                    # Add to queue (FIFO)
                     if not self.blink_queue.full():
                         self.blink_queue.put(current_time)
                     
-                    # Analyze patterns using enhanced methodology
+                    # Analyze patterns 
                     self.detect_patterns(current_time)
                 
                 # Reset blink tracking
@@ -220,26 +217,14 @@ class BlinkDetector:
                 self.frame_counter = 0
 
     def detect_patterns(self, current_time):
-        """Detect double/triple blinks using proven Stack Overflow timing logic"""
-        # No debug output
+        """Detect double/triple blinks using timing logic"""
         
-        # Stack Overflow approach: use time.time() for intervals
+        # time.time() for intervals
         if len(self.blink_times) >= 2:
             recent_times = self.blink_times[-3:]  # Last 3 blinks max
             
-            # Check patterns in correct order: DOUBLE first, then TRIPLE
-            # Double blink: check last 2 blinks (most recent)
-            if len(recent_times) >= 2:
-                interval = recent_times[-1] - recent_times[-2]  # Last two blinks
-                
-                # Double blink validation
-                if interval < self.DOUBLE_BLINK_INTERVAL_MAX:
-                    print("DOUBLE BLINK")
-                    self.double_detected = True
-                    self.show_double_animation = True
-                    self.animation_start_time = current_time
-            
-            # Triple blink: check last 3 blinks (separate from double)
+            # Check patterns in correct order: TRIPLE first, then DOUBLE
+            # Triple blink: check last 3 blinks (highest priority)
             if len(recent_times) >= 3:
                 interval1 = recent_times[-2] - recent_times[-3]  # Second and third from last
                 interval2 = recent_times[-1] - recent_times[-2]  # First and second from last
@@ -253,6 +238,31 @@ class BlinkDetector:
                     self.triple_detected = True
                     self.show_triple_animation = True
                     self.animation_start_time = current_time
+                    
+                    # Cancel any pending double blink since this is a triple blink
+                    self.pending_double_blink_time = 0
+                    
+                    # Clean old blinks (keep recent 10)
+                    if len(self.blink_times) > 10:
+                        self.blink_times = self.blink_times[-10:]
+                    return  # Exit early to prevent double blink detection
+            
+            # Double blink: check last 2 blinks (only if not a triple blink)
+            if len(recent_times) >= 2:
+                interval = recent_times[-1] - recent_times[-2]  # Last two blinks
+                
+                # Double blink validation with delay to prevent misclassification
+                if interval < self.DOUBLE_BLINK_INTERVAL_MAX:
+                    # Set pending double blink time instead of immediately detecting
+                    if self.pending_double_blink_time == 0:
+                        self.pending_double_blink_time = current_time
+                    # Check if enough time has passed to confirm double blink
+                    elif current_time - self.pending_double_blink_time >= self.blink_validation_window:
+                        print("DOUBLE BLINK")
+                        self.double_detected = True
+                        self.show_double_animation = True
+                        self.animation_start_time = current_time
+                        self.pending_double_blink_time = 0  # Reset pending
                     
             # Clean old blinks (keep recent 10)
             if len(self.blink_times) > 10:
@@ -322,7 +332,7 @@ def main():
         if not ret:
             break
         
-        # Get current time (Stack Overflow methodology)
+        # Get current time 
         current_time = time.time()
         
         # Convert frame for MediaPipe

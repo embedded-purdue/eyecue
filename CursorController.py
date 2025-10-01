@@ -12,6 +12,8 @@ screen.
 Assumptions:
     - face is centered compared to screen left-to-right and camera left-to-right
     (this assumption only holds up using a webcam, not glasses likely)
+    - face is centered up-and-down on those metrics too
+    - this will be fixed by Sunday so it can accomodate for ANY screen orthagonal to your vision
     
 
 
@@ -28,10 +30,12 @@ class CursorController:
         self.frameRate = 2
         self.screenWidth, self.screenHeight = pyautogui.size()
         
+        leftAngle *= math.pi / 180
+        rightAngle *= math.pi / 180
+        topAngle *= math.pi/180
+        bottomAngle *= math.pi/180
+        
         self.screenDistance = self.screenWidth / (2 * math.tan(abs(leftAngle - rightAngle)/2))
-        top = self.screenDistance * math.tan(topAngle)
-        bottom = self.screenDistance * math.tan(bottomAngle)
-        self.vertDisplacement = top - bottom
         self.gyroCenter = [gyroH, gyroV]
         
     
@@ -41,7 +45,7 @@ class CursorController:
         
         # convert horizontal and vertical rotations to radians
         angleH *= math.pi / 180
-        angleV *= math.pi / 180
+        angleV *= -math.pi / 180
         
         # account for head rotation
         angleH += (gyroH - self.gyroCenter[0]) * math.pi / 180
@@ -55,11 +59,15 @@ class CursorController:
         ])
         
         # scale unit vector according to distance from screen
-        scaleFactor = self.screenDistance
+        scaleFactor = self.screenDistance / unitVector[1]        # cos theta sub
         
         # calculate position in coordinates
         x = (unitVector[0] * scaleFactor) + (self.screenWidth / 2)
-        y = (unitVector[2] * scaleFactor) + self.vertDisplacement + (self.screenHeight/2)
+        y = (unitVector[2] * scaleFactor) + (self.screenHeight/2)
         
-        pyautogui.moveTo(x, z, duration=1.0/self.frameRate)
+        pyautogui.moveTo(x, y, duration=1.0/self.frameRate)
         
+
+
+# control = CursorController(-28.4, 28.4, 16.3, -16.3, 0, 0)
+# control.update_target(-28.4, -16.3, 0, 0)

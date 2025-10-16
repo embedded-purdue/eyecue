@@ -1,402 +1,325 @@
 #!/usr/bin/env python3
+"""
+Simple contour-based blink detector
+- uses pupil detection from contour_gaze_tracker.py
+- counts blinks as absence of pupil
+"""
+
 import cv2
-import mediapipe as mp
 import numpy as np
 import time
-import queue
+from collections import deque
 
 class BlinkDetector:
     def __init__(self):
-        # MediaPipe setup 
-        mp_face_mesh = mp.solutions.face_mesh
-        self.face_mesh = mp_face_mesh.FaceMesh(
-            max_num_faces=1,
-            refine_landmarks=True,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5
-        )
-
-        # Enhanced eye landmark tracking for full eyelid detection
-        # Core EAR landmarks 
-        self.LEFT_EYE_IDX = [33, 159, 158, 133, 153, 145]      # Standard EAR points
-        self.RIGHT_EYE_IDX = [362, 380, 374, 263, 386, 385]    # Standard EAR points
-        
-        # Full eyelid tracking landmarks (enhanced detection)
-        self.LEFT_UPPER_LID = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]  # Upper eyelid contour
-        self.LEFT_LOWER_LID = [33, 7, 163, 144, 145, 153, 154, 155, 133, 173, 157, 158, 159, 160, 161, 246]  # Lower eyelid contour
-        self.RIGHT_UPPER_LID = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]  # Upper eyelid
-        self.RIGHT_LOWER_LID = [362, 382, 381, 380, 374, 373, 390, 249, 263, 466, 388, 387, 386, 385, 384, 398]  # Lower eyelid
-        
-        # Iris tracking (green dot visualization)
-        self.LEFT_IRIS = [474, 475, 476, 477]
-        self.RIGHT_IRIS = [469, 470, 471, 472]
-
-        # Relaxed parameters for better detection sensitivity
-        self.EYE_AR_THRESH = 0.25          # Relaxed threshold for easier detection
-        self.CONSEC_FRAMES = 2             # Reduced frames for faster detection
-        self.BLINK_MIN_DURATION = 0.03     # Reduced minimum duration (30ms)
-        self.BLINK_MAX_DURATION = 0.8      # Extended maximum duration (800ms)
-        
-        # Marcus Nyström academic blink classification enhancements
-        self.NYSTROM_VELOCITY_THRESHOLD = 0.04    # Eye movement velocity threshold
-        self.NYSTROM_ACCELERATION_THRESHOLD = 0.02  # Eye movement acceleration
-        self.NYSTROM_SMOOTHING_WINDOW = 3           # Signal smoothing window
-        
-        # Relaxed timing intervals for easier pattern detection
-        self.DOUBLE_BLINK_INTERVAL_MAX = 0.6   # 600ms max interval for double blinks
-        self.TRIPLE_BLINK_INTERVAL_MAX = 0.5   # 500ms max interval for triple blinks
-        self.TRIPLE_BLINK_TOTAL_MAX = 1.2      # 1.2s max total for triple blinks
-        
-        # Pupil Labs enhancement: Blink state tracking
-        self.blink_start_time = 0
-        self.blink_in_progress = False
-        self.blink_validation_window = 0.5  # Pupil Labs: 500ms validation window
-        
-        # Marcus Nyström enhancement: Signal processing buffers
-        self.ear_history = []                           # EAR temporal smoothing
-        self.blink_classification_buffer = []           # Academic blink classification
-        self.velocity_history = []                      # Eye movement velocity tracking
-        self.last_ear_value = 0.3                       # Previous EAR for velocity calculation
-        
-        # Queue data structure 
-        self.blink_queue = queue.Queue(maxsize=10)
-        
-        # Adrian Rosebrock frame counting
-        self.frame_counter = 0
+        self.frame_count = 0
         self.total_blinks = 0
+        self.last_pupil_detected = True
+        self.blink_debounce_frames = 0  # prevent double counting
+        self.debounce_threshold = 0     # no debounce needed for contour tracking (absence of pupil)
         
-        # Blink tracking for patterns
-        self.blink_times = []
-        self.last_blink_time = 0
+        self.blink_queue = deque(maxlen=5)  # queue to track recent blink timestamps (max 5)
+        self.double_blinks = 0              # count of double blinks detected
+        self.triple_blinks = 0              # count of triple blinks detected
         
-        # Output flags
-        self.double_detected = False
-        self.triple_detected = False
-        self.pending_double_blink_time = 0  # Track potential double blink for delay
-        
-        # Visual animation variables
-        self.show_double_animation = False
-        self.show_triple_animation = False
-        self.animation_start_time = 0
-        self.animation_duration = 1.0  # 1 second animation
 
-    def calculate_enhanced_ear(self, core_landmarks, upper_lid, lower_lid, landmarks):
-        """Enhanced EAR calculation using full eyelid tracking for maximum accuracy"""
-        try:
-            # Standard EAR calculation
-            core_points = np.array([[landmarks[i].x, landmarks[i].y] for i in core_landmarks])
-            vertical_dist1 = np.linalg.norm(core_points[1] - core_points[5])
-            vertical_dist2 = np.linalg.norm(core_points[2] - core_points[4])
-            horizontal_dist = np.linalg.norm(core_points[0] - core_points[3])
-            
-            # Base EAR
-            base_ear = (vertical_dist1 + vertical_dist2) / (2.0 * horizontal_dist) if horizontal_dist > 0 else 0.3
-            
-            # Enhanced eyelid analysis
-            upper_points = np.array([[landmarks[i].x, landmarks[i].y] for i in upper_lid])
-            lower_points = np.array([[landmarks[i].x, landmarks[i].y] for i in lower_lid])
-            
-            # Calculate eyelid closure metrics
-            upper_center_y = np.mean(upper_points[:, 1])
-            lower_center_y = np.mean(lower_points[:, 1])
-            eyelid_distance = abs(upper_center_y - lower_center_y)
-            
-            # Normalize eyelid distance
-            eye_height = horizontal_dist * 0.6  # Approximate eye height
-            normalized_distance = eyelid_distance / eye_height if eye_height > 0 else 0.5
-            
-            # Enhanced EAR combining standard EAR + eyelid analysis (research-backed)
-            enhanced_ear = (base_ear * 0.7) + (normalized_distance * 0.3)
-            
-            # Clamp to realistic range (Marcus Nyström validation)
-            return max(0.05, min(0.6, enhanced_ear))
-            
-        except Exception:
-            return 0.3  # Fallback for landmark errors
+        self.BLINK_DURATION_MEAN = 0.202    # 202ms mean blink duration
+        self.BLINK_DURATION_STD = 0.05      # ~50ms standard deviation
+        
+        # Research-backed timing thresholds for blink detection (based on Chen & Epps 2019)
+        self.DOUBLE_BLINK_INTERVAL = 0.6    # 600ms max interval for double blinks (research-based)
+        self.TRIPLE_BLINK_INTERVAL = 0.4    # 400ms max interval for triple blinks (research-based)
+        self.TRIPLE_BLINK_TOTAL = 1.0       # 1000ms max total for triple blinks (research-based)
+        self.PATTERN_TIMEOUT = 1.2          # 1200ms timeout to clear old blinks (research-based)
+        
+        # Precise timing state tracking
+        self.blink_state = "idle"            # idle, waiting_for_second, waiting_for_third
+        self.first_blink_time = 0            # timestamp of first blink
+        self.second_blink_time = 0           # timestamp of second blink
+        self.waiting_start_time = 0          # when we started waiting
+        
+        # blink detection balance - not too sensitive but detect absence of pupil
+        self.blink_timestamps = []           # track all blink timestamps for accuracy
+        self.last_blink_time = 0            # track last blink time for accuracy
+        self.pupil_stability_frames = 0     # track consecutive frames with same pupil state
+        self.stability_threshold = 2        # need 2 consistent frames for stable detection
+        
+        
+        print("simple contour blink detector - press 'q' to quit")
+        print("blink = no pupil detected")
+        print("detects double and triple blinks with research-backed timing")
 
-    def calculate_ear(self, eye_landmarks, landmarks):
-        """Standard EAR calculation (maintained for compatibility)"""
-        try:
-            points = np.array([[landmarks[i].x, landmarks[i].y] for i in eye_landmarks])
-            vertical_dist1 = np.linalg.norm(points[1] - points[5])
-            vertical_dist2 = np.linalg.norm(points[2] - points[4])
-            horizontal_dist = np.linalg.norm(points[0] - points[3])
-            
-            if horizontal_dist > 0:
-                ear = (vertical_dist1 + vertical_dist2) / (2.0 * horizontal_dist)
-                return max(0.1, min(0.5, ear))
-            else:
-                return 0.3
-        except Exception:
-            return 0.3
-
-    def apply_nystrom_signal_processing(self, ear_value, current_time):
-        """Apply Marcus Nyström academic signal processing enhancements"""
-        # Temporal smoothing (Marcus Nyström methodology)
-        self.ear_history.append(ear_value)
-        if len(self.ear_history) > self.NYSTROM_SMOOTHING_WINDOW:
-            self.ear_history = self.ear_history[-self.NYSTROM_SMOOTHING_WINDOW:]
+    def detect_pupil_contour(self, frame):
+        """exact pupil detection from contour_gaze_tracker.py with smaller ROI"""
+        # convert to grayscale
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         
-        # Smoothed EAR calculation
-        smoothed_ear = sum(self.ear_history) / len(self.ear_history)
+        # crop roi ~ single eye area (smaller to avoid detecting both eyes)
+        h, w = gray.shape
+        roi = gray[int(h*0.45):int(h*0.65), int(w*0.4):int(w*0.6)]
+        roi_color = frame[int(h*0.45):int(h*0.65), int(w*0.4):int(w*0.6)]
         
-        # Calculate velocity and acceleration (Marcus Nyström academic approach)
-        velocity = abs(smoothed_ear - self.last_ear_value)
-        self.velocity_history.append(velocity)
-        
-        if len(self.velocity_history) > 5:
-            self.velocity_history = self.velocity_history[-5:]
-        
-        acceleration = abs(self.velocity_history[-1] - self.velocity_history[-2]) if len(self.velocity_history) >= 2 else 0
-        
-        # Store for next iteration
-        self.last_ear_value = smoothed_ear
-        
-        # Marcus Nyström academic validation
-        return smoothed_ear, velocity, acceleration
-
-    def process_blinks(self, landmarks, current_time):
-        """Enhanced blink detection combining Pupil Labs + Adrian Rosebrock + Stack Overflow"""
-        # Enhanced EAR calculation using full eyelid tracking
-        left_ear = self.calculate_enhanced_ear(
-            self.LEFT_EYE_IDX, 
-            self.LEFT_UPPER_LID, 
-            self.LEFT_LOWER_LID, 
-            landmarks
+        # binarize -> pupil dark spot (exact same method as contour_gaze_tracker.py)
+        thresh = cv2.adaptiveThreshold(
+            roi, 255,
+            cv2.ADAPTIVE_THRESH_MEAN_C,
+            cv2.THRESH_BINARY_INV,
+            21, 10
         )
-        right_ear = self.calculate_enhanced_ear(
-            self.RIGHT_EYE_IDX, 
-            self.RIGHT_UPPER_LID, 
-            self.RIGHT_LOWER_LID, 
-            landmarks
-        )
-        raw_ear = (left_ear + right_ear) / 2.0
         
-        # Apply Marcus Nyström academic signal processing
-        smoothed_ear, velocity, acceleration = self.apply_nystrom_signal_processing(raw_ear, current_time)
+        # find contours (blobs)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        # Marcus Nyström academic enhancement
-        enhanced_threshold = self.EYE_AR_THRESH
-        if velocity > self.NYSTROM_VELOCITY_THRESHOLD:
-            enhanced_threshold *= 0.9  # Lower threshold for rapid movements
-        if acceleration > self.NYSTROM_ACCELERATION_THRESHOLD:
-            enhanced_threshold *= 1.1  # Higher threshold for high acceleration
-
-        # Enhanced blink state machine with academic validation
-        if smoothed_ear < enhanced_threshold:
-            if not self.blink_in_progress:
-                # Blink start detected
-                self.blink_in_progress = True
-                self.blink_start_time = current_time
-                self.frame_counter = 1
-            else:
-                # Continue tracking blink
-                self.frame_counter += 1
-        else:
-            if self.blink_in_progress:
-                # Blink end - validate duration
-                blink_duration = current_time - self.blink_start_time
-                
-                # Pupil Labs duration validation
-                if (self.frame_counter >= self.CONSEC_FRAMES and 
-                    self.BLINK_MIN_DURATION <= blink_duration <= self.BLINK_MAX_DURATION):
-                    
-                    # Validated blink detected
-                    self.total_blinks += 1
-                    self.blink_times.append(current_time)
-                    
-                    # Add to queue (FIFO)
-                    if not self.blink_queue.full():
-                        self.blink_queue.put(current_time)
-                    
-                    # Analyze patterns 
-                    self.detect_patterns(current_time)
-                
-                # Reset blink tracking
-                self.blink_in_progress = False
-                self.frame_counter = 0
-
-    def detect_patterns(self, current_time):
-        """Detect double/triple blinks using timing logic"""
-        
-        # time.time() for intervals
-        if len(self.blink_times) >= 2:
-            recent_times = self.blink_times[-3:]  # Last 3 blinks max
+        if contours:
+            # filter contours by size to ensure it's actually a pupil (not eyelid or other dark region)
+            valid_contours = []
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                # pupil should be reasonably sized (not too big, not too small)
+                if 50 < area < 1000:  # reasonable size range for pupil
+                    valid_contours.append(contour)
             
-            # Check patterns in correct order: TRIPLE first, then DOUBLE
-            # Triple blink: check last 3 blinks (highest priority)
-            if len(recent_times) >= 3:
-                interval1 = recent_times[-2] - recent_times[-3]  # Second and third from last
-                interval2 = recent_times[-1] - recent_times[-2]  # First and second from last
-                total_time = recent_times[-1] - recent_times[-3]  # All three blinks
+            if valid_contours:
+                # assume biggest valid blob = pupil
+                pupil = max(valid_contours, key=cv2.contourArea)
+                x, y, w_box, h_box = cv2.boundingRect(pupil)
                 
-                # Triple blink validation (must be a complete triple, not just double + single)
-                if (interval1 < self.TRIPLE_BLINK_INTERVAL_MAX and 
-                    interval2 < self.TRIPLE_BLINK_INTERVAL_MAX and 
-                    total_time < self.TRIPLE_BLINK_TOTAL_MAX):
-                    print("TRIPLE BLINK")
-                    self.triple_detected = True
-                    self.show_triple_animation = True
-                    self.animation_start_time = current_time
-                    
-                    # Cancel any pending double blink since this is a triple blink
-                    self.pending_double_blink_time = 0
-                    
-                    # Clean old blinks (keep recent 10)
-                    if len(self.blink_times) > 10:
-                        self.blink_times = self.blink_times[-10:]
-                    return  # Exit early to prevent double blink detection
-            
-            # Double blink: check last 2 blinks (only if not a triple blink)
-            if len(recent_times) >= 2:
-                interval = recent_times[-1] - recent_times[-2]  # Last two blinks
+                # calc center coords (relative to roi)
+                cx = x + w_box // 2
+                cy = y + h_box // 2
                 
-                # Double blink validation with delay to prevent misclassification
-                if interval < self.DOUBLE_BLINK_INTERVAL_MAX:
-                    # Set pending double blink time instead of immediately detecting
-                    if self.pending_double_blink_time == 0:
-                        self.pending_double_blink_time = current_time
-                    # Check if enough time has passed to confirm double blink
-                    elif current_time - self.pending_double_blink_time >= self.blink_validation_window:
-                        print("DOUBLE BLINK")
-                        self.double_detected = True
-                        self.show_double_animation = True
-                        self.animation_start_time = current_time
-                        self.pending_double_blink_time = 0  # Reset pending
-                    
-            # Clean old blinks (keep recent 10)
-            if len(self.blink_times) > 10:
-                self.blink_times = self.blink_times[-10:]
+                # convert to full frame coords (corrected for smaller ROI)
+                full_cx = cx + int(w*0.4)   # add roi offset (40% of width)
+                full_cy = cy + int(h*0.45)  # add roi offset (45% of height)
+                
+                return (full_cx, full_cy), (cx, cy), (w_box, h_box)
+        
+        return None, None, None
 
-    def draw_animations(self, frame):
-        """Draw visual animations for detected patterns"""
+    def detect_blink(self, frame):
+        """stable blink detection - blink = no pupil detected with stability check"""
+        pupil_center, roi_center, bbox = self.detect_pupil_contour(frame)
+        
+        # simple logic: if pupil was there before and now it's gone = blink
+        pupil_detected = pupil_center is not None
+        
+        # balanced blink detection: not too sensitive but detect absence of pupil
+        if self.last_pupil_detected and not pupil_detected:
+            # pupil disappeared - check stability
+            self.pupil_stability_frames += 1
+            
+            # only count as blink if stable for 2 frames (not too sensitive)
+            if self.pupil_stability_frames >= self.stability_threshold:
+                current_time = time.time()
+                
+                # prevent duplicate blinks within 150ms (less sensitive)
+                if current_time - self.last_blink_time > 0.15:
+                    self.blink_timestamps.append(current_time)
+                    self.last_blink_time = current_time
+                    print(f"BLINK DETECTED! Pupil disappeared at {current_time:.3f}s")
+                    
+                    # handle blink based on current state
+                    if self.blink_state == "idle":
+                        # first blink - start waiting for second
+                        self.blink_state = "waiting_for_second"
+                        self.first_blink_time = current_time
+                        self.waiting_start_time = current_time
+                        print(f"First blink detected - waiting for second blink...")
+                    
+                    elif self.blink_state == "waiting_for_second":
+                        # second blink detected
+                        interval = current_time - self.first_blink_time
+                        if interval < self.DOUBLE_BLINK_INTERVAL:
+                            # second blink within threshold - wait for third
+                            self.blink_state = "waiting_for_third"
+                            self.second_blink_time = current_time
+                            self.waiting_start_time = current_time
+                            print(f"Second blink detected - waiting for third blink...")
+                        else:
+                            # second blink too late - count first as single, start new pattern
+                            self.total_blinks += 1
+                            print(f"Single blink detected (second too late). Total: {self.total_blinks}")
+                            self.blink_state = "idle"
+                            self.first_blink_time = current_time
+                            self.waiting_start_time = current_time
+                            print(f"Starting new pattern with second blink...")
+                            
+                    elif self.blink_state == "waiting_for_third":
+                        # third blink detected
+                        interval = current_time - self.second_blink_time
+                        total_time = current_time - self.first_blink_time
+                        if interval < self.TRIPLE_BLINK_INTERVAL and total_time < self.TRIPLE_BLINK_TOTAL:
+                            # triple blink detected
+                            self.triple_blinks += 1
+                            print(f"TRIPLE BLINK DETECTED! Total: {self.triple_blinks}")
+                            self.blink_state = "idle"
+                        else:
+                            # third blink too late - count as double blink
+                            self.double_blinks += 1
+                            print(f"DOUBLE BLINK DETECTED! Total: {self.double_blinks}")
+                            self.blink_state = "idle"
+        
+        elif not self.last_pupil_detected and pupil_detected:
+            # pupil reappeared - reset stability counter
+            self.pupil_stability_frames = 0
+        
+        elif self.last_pupil_detected and pupil_detected:
+            # pupil still present - reset stability counter
+            self.pupil_stability_frames = 0
+        
+        # check for timeouts on every frame (accuracy improvement)
         current_time = time.time()
+        if self.blink_state == "waiting_for_second":
+            if current_time - self.waiting_start_time >= self.DOUBLE_BLINK_INTERVAL:
+                # timeout waiting for second blink - count as single
+                print(f"Timeout waiting for second blink - counting as single blink")
+                self.total_blinks += 1
+                self.blink_state = "idle"
+                
+        elif self.blink_state == "waiting_for_third":
+            if current_time - self.waiting_start_time >= self.TRIPLE_BLINK_INTERVAL:
+                # timeout waiting for third blink - detect as double
+                print(f"Timeout waiting for third blink - detecting as double blink")
+                self.double_blinks += 1
+                print(f"DOUBLE BLINK DETECTED! Total: {self.double_blinks}")
+                print(f"  Interval: {self.second_blink_time - self.first_blink_time:.3f}s")
+                self.blink_state = "idle"
         
-        # Double blink animation
-        if self.show_double_animation:
-            elapsed = current_time - self.animation_start_time
+        # accuracy improvement: cleanup old timestamps
+        if len(self.blink_timestamps) > 10:
+            self.blink_timestamps = self.blink_timestamps[-10:]  # keep only last 10 blinks
+        
+        self.last_pupil_detected = pupil_detected
+        return pupil_detected, pupil_center
+
+    def draw_ui_overlay(self, frame, pupil_detected, pupil_center):
+        """draw simple blink counters and eye tracking area (FPS-independent)"""
+        h, w = frame.shape[:2]
+        
+        # draw green box to show single eye tracking area (even smaller to avoid both eyes)
+        roi_x1, roi_y1 = int(w*0.4), int(h*0.45)
+        roi_x2, roi_y2 = int(w*0.6), int(h*0.65)
+        cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 255, 0), 2)
+        cv2.putText(frame, "SINGLE EYE AREA", (roi_x1, roi_y1-10), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # simple blink counters in top-left corner
+        cv2.putText(frame, f"Single: {self.total_blinks}", (10, 30), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"Double: {self.double_blinks}", (10, 60), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+        cv2.putText(frame, f"Triple: {self.triple_blinks}", (10, 90), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # show tracking status
+        if pupil_detected and pupil_center:
+            # draw pupil center
+            cv2.circle(frame, pupil_center, 5, (0, 255, 0), -1)
+            # show tracking status on screen
+            cv2.putText(frame, "TRACKING: ACTIVE", (10, 120), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+        else:
+            # show no tracking
+            cv2.putText(frame, "TRACKING: NO PUPIL", (10, 120), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
+        
+        
+        # quit instruction
+        cv2.putText(frame, "Press 'q' to quit", (w-150, h-20), 
+                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 2)
+
+
+
+
+    def run(self, camera_index=0):
+        """main blink detection loop"""
+        cap = cv2.VideoCapture(camera_index)
+        if not cap.isOpened():
+            print(f"[error] could not open camera {camera_index}")
+            return
+        
+        # set camera properties for robust contour gaze tracking (FPS-independent)
+        # try to set resolution, but don't fail if camera doesn't support it
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # minimal buffer for real-time
+        # Note: FPS is not set to work with any camera FPS
+        
+        # verify camera is still working after setting properties
+        ret, test_frame = cap.read()
+        if not ret:
+            print("[warning] camera failed after setting properties, using default settings")
+            cap.release()
+            cap = cv2.VideoCapture(camera_index)
+            if not cap.isOpened():
+                print(f"[error] could not reopen camera {camera_index}")
+                return
+
+        print("[info] starting FPS-independent blink detection...")
+        print(f"[info] camera: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} @ {cap.get(cv2.CAP_PROP_FPS):.1f}fps")
+        
+        # time-based output for FPS independence
+        last_output_time = time.time()
+        output_interval = 2.0  # output every 2 seconds regardless of FPS
+        
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("[error] failed to read frame from camera")
+                print("[info] trying to reinitialize camera...")
+                cap.release()
+                cap = cv2.VideoCapture(camera_index)
+                if not cap.isOpened():
+                    print("[error] could not reopen camera")
+                    break
+                continue
             
-            if elapsed < self.animation_duration:
-                # Animated circle for double blink
-                alpha = int(255 * (1 - elapsed / self.animation_duration))
-                
-                # Blue circles that pulse and fade
-                for i in range(10, 60, 10):
-                    center = (frame.shape[1]//2, frame.shape[0]//3)
-                    cv2.circle(frame, center, i, (255, 0, 0), 3)
-                
-                # Text overlay
-                cv2.putText(frame, "DOUBLE BLINK!", 
-                           (50, frame.shape[0]//2), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            else:
-                self.show_double_animation = False
-                
-        # Triple blink animation  
-        if self.show_triple_animation:
-            elapsed = current_time - self.animation_start_time
+            self.frame_count += 1
+            current_time = time.time()
             
-            if elapsed < self.animation_duration:
-                # Animated circles for triple blink
-                alpha = int(255 * (1 - elapsed / self.animation_duration))
-                
-                # Red circles that pulse and fade
-                for i in range(15, 80, 15):
-                    center = (frame.shape[1]//2, frame.shape[0]//3)
-                    cv2.circle(frame, center, i, (0, 0, 255), 4)
-                
-                # Text overlay
-                cv2.putText(frame, "TRIPLE BLINK!", 
-                           (50, frame.shape[0]//2), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
-            else:
-                self.show_triple_animation = False
+            # detect blink
+            pupil_detected, pupil_center = self.detect_blink(frame)
+            
+            
+            # print every 2 seconds for FPS-independent performance
+            if current_time - last_output_time >= output_interval:
+                print(f"\n=== Time {current_time:.1f}s (Frame {self.frame_count}) ===")
+                if pupil_detected:
+                    print(f"Pupil detected at: {pupil_center}")
+                else:
+                    print("No pupil detected (potential blink)")
+                    print("  This means: eye is closed, blinking, or no valid pupil found")
+                print(f"Last pupil state: {self.last_pupil_detected}")
+                print(f"Current pupil state: {pupil_detected}")
+                print(f"Total blinks: {self.total_blinks}")
+                print(f"Double blinks: {self.double_blinks}")
+                print(f"Triple blinks: {self.triple_blinks}")
+                print(f"Current state: {self.blink_state}")
+                last_output_time = current_time
+            
+            # create comprehensive UI overlay
+            self.draw_ui_overlay(frame, pupil_detected, pupil_center)
+            
+            # show frame
+            cv2.imshow("Blink Detector", frame)
+            
+            # exit on 'q'
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+        
+        cap.release()
+        cv2.destroyAllWindows()
+        print("[info] blink detection stopped")
+
 
 def main():
-    """Main camera loop"""
-    # Camera setup
-    cap = cv2.VideoCapture(0)
-    if not cap.isOpened():
-        print("Error: Could not open camera")
-        return
-
-    # Initialize detector
+    import argparse
+    parser = argparse.ArgumentParser(description='contour-based blink detector')
+    parser.add_argument('--camera', type=int, default=0, help='camera index')
+    args = parser.parse_args()
+    
     detector = BlinkDetector()
-    
-    print("Blink Detector Started")
-    print("Just outputs: DOUBLE BLINK or TRIPLE BLINK")
-    print("Visual: Blue circles for DOUBLE, Red circles for TRIPLE")
-    
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
-        
-        # Get current time 
-        current_time = time.time()
-        
-        # Convert frame for MediaPipe
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        results = detector.face_mesh.process(rgb_frame)
-        
-        if results.multi_face_landmarks:
-            landmarks = results.multi_face_landmarks[0].landmark
-            
-            # Process blinks
-            detector.process_blinks(landmarks, current_time)
-            
-            # Draw simple pupil tracker (green dots)
-            try:
-                # Enhanced eyelid tracking visualization
-                # Left iris center (green dots for reference)
-                left_iris_x = sum([landmarks[i].x for i in detector.LEFT_IRIS]) / len(detector.LEFT_IRIS)
-                left_iris_y = sum([landmarks[i].y for i in detector.LEFT_IRIS]) / len(detector.LEFT_IRIS)
-                left_center = (int(left_iris_x * frame.shape[1]), int(left_iris_y * frame.shape[0]))
-                
-                # Right iris center
-                right_iris_x = sum([landmarks[i].x for i in detector.RIGHT_IRIS]) / len(detector.RIGHT_IRIS)
-                right_iris_y = sum([landmarks[i].y for i in detector.RIGHT_IRIS]) / len(detector.RIGHT_IRIS)
-                right_center = (int(right_iris_x * frame.shape[1]), int(right_iris_y * frame.shape[0]))
-                
-                # Draw iris tracker dots
-                cv2.circle(frame, left_center, 5, (0, 255, 0), -1)
-                cv2.circle(frame, right_center, 5, (0, 255, 0), -1)
-                
-                # Draw enhanced eyelid contours for visual feedback
-                left_upper_points = [(int(landmarks[i].x * frame.shape[1]), int(landmarks[i].y * frame.shape[0])) 
-                                   for i in detector.LEFT_UPPER_LID]
-                left_lower_points = [(int(landmarks[i].x * frame.shape[1]), int(landmarks[i].y * frame.shape[0])) 
-                                   for i in detector.LEFT_LOWER_LID]
-                
-                
-                right_upper_points = [(int(landmarks[i].x * frame.shape[1]), int(landmarks[i].y * frame.shape[0])) 
-                                    for i in detector.RIGHT_UPPER_LID]
-                right_lower_points = [(int(landmarks[i].x * frame.shape[1]), int(landmarks[i].y * frame.shape[0])) 
-                                    for i in detector.RIGHT_LOWER_LID]
-                
-                # Draw eyelid contours
-                cv2.polylines(frame, [np.array(left_upper_points)], False, (0, 255, 255), 1)   # Yellow upper lids
-                cv2.polylines(frame, [np.array(left_lower_points)], False, (255, 255, 0), 1)   # Cyan lower lids
-                cv2.polylines(frame, [np.array(right_upper_points)], False, (0, 255, 255), 1)  # Yellow upper lids
-                cv2.polylines(frame, [np.array(right_lower_points)], False, (255, 255, 0), 1)    # Cyan lower lids
-                
-            except:
-                pass
-            
-            # Draw pattern animations
-            detector.draw_animations(frame)
-        
-        # Show frame
-        cv2.imshow("Blink Detector", frame)
-        
-        # Exit on 'q'
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-    
-    # Cleanup
-    cap.release()
-    cv2.destroyAllWindows()
-    print("Blink detector stopped.")
+    detector.run(camera_index=args.camera)
 
 if __name__ == "__main__":
     main()

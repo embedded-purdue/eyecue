@@ -11,10 +11,10 @@ def detect_pupil_contour(frame):
     # convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     
-    # crop roi ~ eye area (adjust ratios if needed)
+    # crop roi ~ single eye area (smaller, more focused)
     h, w = gray.shape
-    roi = gray[int(h*0.3):int(h*0.8), int(w*0.2):int(w*0.8)]
-    roi_color = frame[int(h*0.3):int(h*0.8), int(w*0.2):int(w*0.8)]
+    roi = gray[int(h*0.4):int(h*0.7), int(w*0.35):int(w*0.65)]
+    roi_color = frame[int(h*0.4):int(h*0.7), int(w*0.35):int(w*0.65)]
     
     # binarize -> pupil dark spot
     thresh = cv2.adaptiveThreshold(
@@ -37,8 +37,8 @@ def detect_pupil_contour(frame):
         cy = y + h_box // 2
         
         # convert to full frame coords
-        full_cx = cx + int(w*0.2)  # add roi offset
-        full_cy = cy + int(h*0.3)  # add roi offset
+        full_cx = cx + int(w*0.35)  # add roi offset
+        full_cy = cy + int(h*0.4)  # add roi offset
         
         return (full_cx, full_cy), (cx, cy), (w_box, h_box)
     

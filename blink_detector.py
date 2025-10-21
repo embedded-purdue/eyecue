@@ -1,26 +1,29 @@
 #!/usr/bin/env python3
-"""
-Simple contour-based blink detector
-- uses pupil detection from contour_gaze_tracker.py
-- counts blinks as absence of pupil
-"""
 
 import cv2
 import numpy as np
 import time
 from collections import deque
+from pupil_detector import detect_pupil_contour
 
 class BlinkDetector:
     def __init__(self):
         self.frame_count = 0
         self.total_blinks = 0
         self.last_pupil_detected = True
+        self.last_pupil_in_focus = False  # track previous focus state
         self.blink_debounce_frames = 0  # prevent double counting
         self.debounce_threshold = 0     # no debounce needed for contour tracking (absence of pupil)
         
         self.blink_queue = deque(maxlen=5)  # queue to track recent blink timestamps (max 5)
         self.double_blinks = 0              # count of double blinks detected
         self.triple_blinks = 0              # count of triple blinks detected
+        
+        # Focus tracking for pupil position
+        self.focus_center = None            # center of focus area
+        self.focus_radius = 60              # radius of focus area (pixels) - smaller for more sensitivity
+        self.focused_frames = 0             # consecutive frames pupil was in focus
+        self.focus_threshold = 5            # frames needed to establish focus - lower for faster response
         
 
         self.BLINK_DURATION_MEAN = 0.202    # 202ms mean blink duration
@@ -46,162 +49,247 @@ class BlinkDetector:
         
         
         print("simple contour blink detector - press 'q' to quit")
-        print("blink = no pupil detected")
+        print("blink = pupil disappeared OR moved away from focus")
+        print("sensitive to any movement away from focus area")
         print("detects double and triple blinks with research-backed timing")
+        print(f"Timing thresholds:")
+        print(f"  Double blink interval: {self.DOUBLE_BLINK_INTERVAL:.3f}s")
+        print(f"  Triple blink interval: {self.TRIPLE_BLINK_INTERVAL:.3f}s")
+        print(f"  Triple blink total: {self.TRIPLE_BLINK_TOTAL:.3f}s")
+        print("Controls: 'q'=quit, 't'=test patterns, 'r'=reset state, 'f'=reset focus")
 
-    def detect_pupil_contour(self, frame):
-        """exact pupil detection from contour_gaze_tracker.py with smaller ROI"""
-        # convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    def is_pupil_in_focus(self, pupil_center):
+        """Check if pupil is within focus area"""
+        if pupil_center is None or self.focus_center is None:
+            return False
         
-        # crop roi ~ single eye area (smaller to avoid detecting both eyes)
-        h, w = gray.shape
-        roi = gray[int(h*0.45):int(h*0.65), int(w*0.4):int(w*0.6)]
-        roi_color = frame[int(h*0.45):int(h*0.65), int(w*0.4):int(w*0.6)]
+        # Calculate distance from focus center
+        dx = pupil_center[0] - self.focus_center[0]
+        dy = pupil_center[1] - self.focus_center[1]
+        distance = (dx*dx + dy*dy)**0.5
         
-        # binarize -> pupil dark spot (exact same method as contour_gaze_tracker.py)
-        thresh = cv2.adaptiveThreshold(
-            roi, 255,
-            cv2.ADAPTIVE_THRESH_MEAN_C,
-            cv2.THRESH_BINARY_INV,
-            21, 10
-        )
-        
-        # find contours (blobs)
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
-        if contours:
-            # filter contours by size to ensure it's actually a pupil (not eyelid or other dark region)
-            valid_contours = []
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                # pupil should be reasonably sized (not too big, not too small)
-                if 50 < area < 1000:  # reasonable size range for pupil
-                    valid_contours.append(contour)
-            
-            if valid_contours:
-                # assume biggest valid blob = pupil
-                pupil = max(valid_contours, key=cv2.contourArea)
-                x, y, w_box, h_box = cv2.boundingRect(pupil)
-                
-                # calc center coords (relative to roi)
-                cx = x + w_box // 2
-                cy = y + h_box // 2
-                
-                # convert to full frame coords (corrected for smaller ROI)
-                full_cx = cx + int(w*0.4)   # add roi offset (40% of width)
-                full_cy = cy + int(h*0.45)  # add roi offset (45% of height)
-                
-                return (full_cx, full_cy), (cx, cy), (w_box, h_box)
-        
-        return None, None, None
+        return distance <= self.focus_radius
+
+    def update_focus_area(self, pupil_center):
+        """Update focus area based on pupil position - keep focus area stable"""
+        if pupil_center is not None:
+            if self.focus_center is None:
+                # Initialize focus area at first pupil detection
+                self.focus_center = pupil_center
+                self.focused_frames = 1
+                print(f"Focus area initialized at: {pupil_center}")
+            else:
+                # Check if pupil is still in focus
+                if self.is_pupil_in_focus(pupil_center):
+                    self.focused_frames += 1
+                    # Only update focus center if pupil has been stable for a while
+                    if self.focused_frames > 30:  # after 30 frames of stability
+                        # Very slow adjustment to follow gradual drift
+                        alpha = 0.02  # much slower smoothing
+                        self.focus_center = (
+                            int(self.focus_center[0] * (1-alpha) + pupil_center[0] * alpha),
+                            int(self.focus_center[1] * (1-alpha) + pupil_center[1] * alpha)
+                        )
+                else:
+                    # Pupil moved out of focus - keep focus area fixed
+                    # Don't reset focus area, let it stay where it was
+                    pass
+
 
     def detect_blink(self, frame):
-        """stable blink detection - blink = no pupil detected with stability check"""
-        pupil_center, roi_center, bbox = self.detect_pupil_contour(frame)
-        
-        # simple logic: if pupil was there before and now it's gone = blink
-        pupil_detected = pupil_center is not None
-        
-        # balanced blink detection: not too sensitive but detect absence of pupil
-        if self.last_pupil_detected and not pupil_detected:
-            # pupil disappeared - check stability
-            self.pupil_stability_frames += 1
-            
-            # only count as blink if stable for 2 frames (not too sensitive)
-            if self.pupil_stability_frames >= self.stability_threshold:
-                current_time = time.time()
-                
-                # prevent duplicate blinks within 150ms (less sensitive)
-                if current_time - self.last_blink_time > 0.15:
-                    self.blink_timestamps.append(current_time)
-                    self.last_blink_time = current_time
-                    print(f"BLINK DETECTED! Pupil disappeared at {current_time:.3f}s")
-                    
-                    # handle blink based on current state
-                    if self.blink_state == "idle":
-                        # first blink - start waiting for second
-                        self.blink_state = "waiting_for_second"
-                        self.first_blink_time = current_time
-                        self.waiting_start_time = current_time
-                        print(f"First blink detected - waiting for second blink...")
-                    
-                    elif self.blink_state == "waiting_for_second":
-                        # second blink detected
-                        interval = current_time - self.first_blink_time
-                        if interval < self.DOUBLE_BLINK_INTERVAL:
-                            # second blink within threshold - wait for third
-                            self.blink_state = "waiting_for_third"
-                            self.second_blink_time = current_time
-                            self.waiting_start_time = current_time
-                            print(f"Second blink detected - waiting for third blink...")
-                        else:
-                            # second blink too late - count first as single, start new pattern
-                            self.total_blinks += 1
-                            print(f"Single blink detected (second too late). Total: {self.total_blinks}")
-                            self.blink_state = "idle"
-                            self.first_blink_time = current_time
-                            self.waiting_start_time = current_time
-                            print(f"Starting new pattern with second blink...")
-                            
-                    elif self.blink_state == "waiting_for_third":
-                        # third blink detected
-                        interval = current_time - self.second_blink_time
-                        total_time = current_time - self.first_blink_time
-                        if interval < self.TRIPLE_BLINK_INTERVAL and total_time < self.TRIPLE_BLINK_TOTAL:
-                            # triple blink detected
-                            self.triple_blinks += 1
-                            print(f"TRIPLE BLINK DETECTED! Total: {self.triple_blinks}")
-                            self.blink_state = "idle"
-                        else:
-                            # third blink too late - count as double blink
-                            self.double_blinks += 1
-                            print(f"DOUBLE BLINK DETECTED! Total: {self.double_blinks}")
-                            self.blink_state = "idle"
-        
-        elif not self.last_pupil_detected and pupil_detected:
-            # pupil reappeared - reset stability counter
-            self.pupil_stability_frames = 0
-        
-        elif self.last_pupil_detected and pupil_detected:
-            # pupil still present - reset stability counter
-            self.pupil_stability_frames = 0
-        
-        # check for timeouts on every frame (accuracy improvement)
+        """detect blink when pupil disappears OR moves away from focus"""
+        pupil_center, roi_center, bbox = detect_pupil_contour(frame)
         current_time = time.time()
-        if self.blink_state == "waiting_for_second":
-            if current_time - self.waiting_start_time >= self.DOUBLE_BLINK_INTERVAL:
-                # timeout waiting for second blink - count as single
-                print(f"Timeout waiting for second blink - counting as single blink")
-                self.total_blinks += 1
-                self.blink_state = "idle"
+        
+        # Update focus area based on current pupil position
+        self.update_focus_area(pupil_center)
+        
+        # Check if pupil is detected
+        pupil_detected = pupil_center is not None
+        pupil_in_focus = self.is_pupil_in_focus(pupil_center) if pupil_detected else False
+        
+        # Check for timeouts FIRST (before processing new blinks)
+        self._check_timeouts(current_time)
+        
+        # Blink detection: track state changes
+        blink_detected = False
+        blink_reason = ""
+        
+        # Case 1: pupil disappeared (eyes closed)
+        if self.last_pupil_detected and not pupil_detected:
+            blink_detected = True
+            blink_reason = "pupil disappeared"
+        
+        # Case 2: pupil was in focus, now moved away from focus
+        elif (self.last_pupil_in_focus and pupil_detected and not pupil_in_focus):
+            blink_detected = True
+            blink_reason = "pupil moved away from focus"
+        
+        # Case 3: pupil was detected, now disappeared (backup check)
+        elif (self.last_pupil_detected and not pupil_detected):
+            blink_detected = True
+            blink_reason = "pupil disappeared"
+        
+        if blink_detected:
+            # prevent duplicate blinks within 100ms
+            if current_time - self.last_blink_time > 0.1:
+                self.blink_timestamps.append(current_time)
+                self.last_blink_time = current_time
+                print(f"BLINK DETECTED! {blink_reason} at {current_time:.3f}s")
                 
-        elif self.blink_state == "waiting_for_third":
-            if current_time - self.waiting_start_time >= self.TRIPLE_BLINK_INTERVAL:
-                # timeout waiting for third blink - detect as double
-                print(f"Timeout waiting for third blink - detecting as double blink")
-                self.double_blinks += 1
-                print(f"DOUBLE BLINK DETECTED! Total: {self.double_blinks}")
-                print(f"  Interval: {self.second_blink_time - self.first_blink_time:.3f}s")
-                self.blink_state = "idle"
+                # handle blink based on current state
+                self._process_blink_state(current_time)
+        
+        # Reset stability counter when pupil state changes
+        if pupil_detected != self.last_pupil_detected:
+            self.pupil_stability_frames = 0
         
         # accuracy improvement: cleanup old timestamps
         if len(self.blink_timestamps) > 10:
             self.blink_timestamps = self.blink_timestamps[-10:]  # keep only last 10 blinks
         
+        # Update state tracking for next frame
         self.last_pupil_detected = pupil_detected
+        self.last_pupil_in_focus = pupil_in_focus
+        
+        # Debug output every 30 frames to track state changes
+        if self.frame_count % 30 == 0:
+            print(f"Frame {self.frame_count}: pupil_detected={pupil_detected}, pupil_in_focus={pupil_in_focus}")
+        
         return pupil_detected, pupil_center
+    
+    def _process_blink_state(self, current_time):
+        """Process blink state transitions with comprehensive timing checks"""
+        if self.blink_state == "idle":
+            # first blink - start waiting for second
+            self.blink_state = "waiting_for_second"
+            self.first_blink_time = current_time
+            self.waiting_start_time = current_time
+            print(f"First blink detected - waiting for second blink...")
+        
+        elif self.blink_state == "waiting_for_second":
+            # second blink detected
+            interval = current_time - self.first_blink_time
+            if interval < self.DOUBLE_BLINK_INTERVAL:
+                # second blink within threshold - wait for third
+                self.blink_state = "waiting_for_third"
+                self.second_blink_time = current_time
+                self.waiting_start_time = current_time
+                print(f"Second blink detected - waiting for third blink...")
+                print(f"  Interval: {interval:.3f}s (threshold: {self.DOUBLE_BLINK_INTERVAL:.3f}s)")
+            else:
+                # second blink too late - count first as single, start new pattern
+                self.total_blinks += 1
+                print(f"Single blink detected (second too late). Total: {self.total_blinks}")
+                print(f"  Interval: {interval:.3f}s (threshold: {self.DOUBLE_BLINK_INTERVAL:.3f}s)")
+                self.blink_state = "idle"
+                self.first_blink_time = current_time
+                self.waiting_start_time = current_time
+                print(f"Starting new pattern with second blink...")
+                
+        elif self.blink_state == "waiting_for_third":
+            # third blink detected
+            interval = current_time - self.second_blink_time
+            total_time = current_time - self.first_blink_time
+            if interval < self.TRIPLE_BLINK_INTERVAL and total_time < self.TRIPLE_BLINK_TOTAL:
+                # triple blink detected
+                self.triple_blinks += 1
+                print(f"TRIPLE BLINK DETECTED! Total: {self.triple_blinks}")
+                print(f"  Interval: {interval:.3f}s (threshold: {self.TRIPLE_BLINK_INTERVAL:.3f}s)")
+                print(f"  Total time: {total_time:.3f}s (threshold: {self.TRIPLE_BLINK_TOTAL:.3f}s)")
+                self.blink_state = "idle"
+            else:
+                # third blink too late - count as double blink
+                self.double_blinks += 1
+                print(f"DOUBLE BLINK DETECTED! Total: {self.double_blinks}")
+                print(f"  Interval: {interval:.3f}s (threshold: {self.TRIPLE_BLINK_INTERVAL:.3f}s)")
+                print(f"  Total time: {total_time:.3f}s (threshold: {self.TRIPLE_BLINK_TOTAL:.3f}s)")
+                self.blink_state = "idle"
+    
+    def _check_timeouts(self, current_time):
+        """Check for timeouts in blink state machine"""
+        if self.blink_state == "waiting_for_second":
+            if current_time - self.waiting_start_time >= self.DOUBLE_BLINK_INTERVAL:
+                # timeout waiting for second blink - count as single
+                self.total_blinks += 1
+                print(f"Timeout waiting for second blink - counting as single blink. Total: {self.total_blinks}")
+                print(f"  Timeout after: {current_time - self.waiting_start_time:.3f}s")
+                self.blink_state = "idle"
+                
+        elif self.blink_state == "waiting_for_third":
+            if current_time - self.waiting_start_time >= self.TRIPLE_BLINK_INTERVAL:
+                # timeout waiting for third blink - detect as double
+                self.double_blinks += 1
+                print(f"Timeout waiting for third blink - detecting as double blink. Total: {self.double_blinks}")
+                print(f"  Timeout after: {current_time - self.waiting_start_time:.3f}s")
+                print(f"  Double blink interval: {self.second_blink_time - self.first_blink_time:.3f}s")
+                self.blink_state = "idle"
+    
+    def get_state_info(self):
+        """Get current state information for debugging and testing"""
+        current_time = time.time()
+        return {
+            'state': self.blink_state,
+            'pupil_detected': self.last_pupil_detected,
+            'stability_frames': self.pupil_stability_frames,
+            'total_blinks': self.total_blinks,
+            'double_blinks': self.double_blinks,
+            'triple_blinks': self.triple_blinks,
+            'first_blink_time': self.first_blink_time,
+            'second_blink_time': self.second_blink_time,
+            'waiting_start_time': self.waiting_start_time,
+            'time_since_first': current_time - self.first_blink_time if self.first_blink_time > 0 else 0,
+            'time_since_second': current_time - self.second_blink_time if self.second_blink_time > 0 else 0,
+            'time_since_waiting': current_time - self.waiting_start_time if self.waiting_start_time > 0 else 0
+        }
+    
+    def reset_state(self):
+        """Reset blink detection state for testing"""
+        self.blink_state = "idle"
+        self.first_blink_time = 0
+        self.second_blink_time = 0
+        self.waiting_start_time = 0
+        self.pupil_stability_frames = 0
+        self.last_blink_time = 0
+        print("Blink detection state reset")
+    
+    def reset_focus_area(self):
+        """Reset focus area to current pupil position"""
+        self.focus_center = None
+        self.focused_frames = 0
+        print("Focus area reset - will reinitialize on next pupil detection")
+    
+    def test_blink_patterns(self):
+        """Test method to verify blink pattern detection"""
+        print("\n=== Testing Blink Pattern Detection ===")
+        print("Current state:", self.blink_state)
+        print("Counts - Single:", self.total_blinks, "Double:", self.double_blinks, "Triple:", self.triple_blinks)
+        
+        if self.blink_state != "idle":
+            state_info = self.get_state_info()
+            print("State details:")
+            print(f"  Time since first blink: {state_info['time_since_first']:.3f}s")
+            print(f"  Time since second blink: {state_info['time_since_second']:.3f}s")
+            print(f"  Time since waiting started: {state_info['time_since_waiting']:.3f}s")
+        
+        print("=== End Test ===\n")
 
     def draw_ui_overlay(self, frame, pupil_detected, pupil_center):
         """draw simple blink counters and eye tracking area (FPS-independent)"""
         h, w = frame.shape[:2]
         
-        # draw green box to show single eye tracking area (even smaller to avoid both eyes)
-        roi_x1, roi_y1 = int(w*0.4), int(h*0.45)
-        roi_x2, roi_y2 = int(w*0.6), int(h*0.65)
+        # draw green box to show pupil detection area (matches pupil_detector.py ROI)
+        roi_x1, roi_y1 = int(w*0.35), int(h*0.4)
+        roi_x2, roi_y2 = int(w*0.65), int(h*0.7)
         cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 255, 0), 2)
-        cv2.putText(frame, "SINGLE EYE AREA", (roi_x1, roi_y1-10), 
+        cv2.putText(frame, "PUPIL DETECTION AREA", (roi_x1, roi_y1-10), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        
+        # draw focus area circle if established
+        if self.focus_center is not None and self.focused_frames >= self.focus_threshold:
+            cv2.circle(frame, self.focus_center, self.focus_radius, (0, 255, 255), 2)
+            cv2.putText(frame, "FOCUS AREA", (self.focus_center[0]-40, self.focus_center[1]-self.focus_radius-10), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
         
         # simple blink counters in top-left corner
         cv2.putText(frame, f"Single: {self.total_blinks}", (10, 30), 
@@ -211,13 +299,17 @@ class BlinkDetector:
         cv2.putText(frame, f"Triple: {self.triple_blinks}", (10, 90), 
                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
-        # show tracking status
+        # show focus status
         if pupil_detected and pupil_center:
             # draw pupil center
             cv2.circle(frame, pupil_center, 5, (0, 255, 0), -1)
-            # show tracking status on screen
-            cv2.putText(frame, "TRACKING: ACTIVE", (10, 120), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            # show focus status
+            if self.is_pupil_in_focus(pupil_center):
+                cv2.putText(frame, "IN FOCUS", (10, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+            else:
+                cv2.putText(frame, "OUT OF FOCUS", (10, 120), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
         else:
             # show no tracking
             cv2.putText(frame, "TRACKING: NO PUPIL", (10, 120), 
@@ -303,9 +395,19 @@ class BlinkDetector:
             # show frame
             cv2.imshow("Blink Detector", frame)
             
-            # exit on 'q'
-            if cv2.waitKey(1) & 0xFF == ord('q'):
+            # handle key presses
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
                 break
+            elif key == ord('t'):
+                # test blink patterns
+                self.test_blink_patterns()
+            elif key == ord('r'):
+                # reset state
+                self.reset_state()
+            elif key == ord('f'):
+                # reset focus area
+                self.reset_focus_area()
         
         cap.release()
         cv2.destroyAllWindows()

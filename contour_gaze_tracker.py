@@ -72,7 +72,7 @@ class ContourGazeTracker:
             camera_index: Camera index (int) or video file path (str)
         """
         
-       cap = cv2.VideoCapture(camera_index)
+        cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
             print(f"[error] could not open camera/video: {camera_index}")
             return

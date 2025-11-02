@@ -66,20 +66,25 @@ class ContourGazeTracker:
         }
 
     def run(self, camera_index=0):
-        """main tracking loop"""
-        # this is just here to try phone camera first fallback to local camera
-        if isinstance(camera_index, str):
-            cap = cv2.VideoCapture(camera_index)
-        else:
-            cap = cv2.VideoCapture(camera_index)
+        """main tracking loop
+
+        Args:
+            camera_index: Camera index (int) or video file path (str)
+        """
+        
+       cap = cv2.VideoCapture(camera_index)
         if not cap.isOpened():
-            print(f"[error] could not open camera {camera_index}")
+            print(f"[error] could not open camera/video: {camera_index}")
             return
         
-        # set camera properties
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_FPS, 30)
+        # set camera properties only if it's a camera (integer), not a video file
+        is_camera = isinstance(camera_index, int)
+        if is_camera:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_FPS, 30)
+        else:
+            print(f"[info] processing video file: {camera_index}")
         
         print("[info] starting contour gaze tracking...")
         
@@ -131,11 +136,17 @@ class ContourGazeTracker:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='contour gaze tracker')
-    parser.add_argument('--camera', type=int, default=0, help='camera index')
+    parser.add_argument('--camera', type=str, default='0', help='camera index (int) or video file path (str)')
     args = parser.parse_args()
     
+    # Convert to int if it's a number, otherwise keep as string (video file path)
+    try:
+        camera_input = int(args.camera)
+    except ValueError:
+        camera_input = args.camera
+    
     tracker = ContourGazeTracker()
-    tracker.run(camera_index=args.camera)
+    tracker.run(camera_index=camera_input)
 
 if __name__ == '__main__':
     main()

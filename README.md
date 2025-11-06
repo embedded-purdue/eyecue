@@ -1,6 +1,6 @@
 # eyecue
 
-EyeCue - eye-controlled cursor system for accessibility
+eyeCue - eye-controlled cursor system for accessibility
 
 ## overview
 
@@ -100,10 +100,3 @@ metrics saved automatically to json/csv on exit.
 
 test videos available in `test_vid/` directory.
 
-## team
-
-embedded systems at purdue (es@p)
-
-## license
-
-[add license information]

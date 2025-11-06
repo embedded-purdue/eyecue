@@ -1,6 +1,6 @@
 # eyecue
 
-eyeCue - eye-controlled cursor system for accessibility
+eyecue - eye-controlled cursor system for accessibility
 
 ## overview
 

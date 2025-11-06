@@ -16,11 +16,6 @@ real-time pupil detection and gaze tracking system using computer vision. design
 
 ## quick start
 
-### prerequisites
-```bash
-pip install opencv-python numpy requests
-```
-
 ### basic usage
 ```bash
 # webcam

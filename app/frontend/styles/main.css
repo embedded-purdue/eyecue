@@ -1,0 +1,303 @@
+/**
+ * styles.css - EyeCue App Styles
+ */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+  background: #ffffff;
+  color: #333;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 20px;
+}
+
+.container {
+  max-width: 500px;
+  width: 100%;
+  text-align: center;
+}
+
+h1 {
+  font-size: 48px;
+  font-weight: 400;
+  margin-bottom: 40px;
+  color: #000;
+}
+
+h2 {
+  font-size: 32px;
+  font-weight: 500;
+  margin-bottom: 30px;
+  color: #000;
+}
+
+/* Eye Logo */
+.eye-logo {
+  margin: 60px 0 40px 0;
+}
+
+.eye-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0;
+}
+
+.eye-shape {
+  width: 100px;
+  height: 60px;
+  border: 3px solid #000;
+  border-radius: 50%;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.eye-pupil {
+  width: 20px;
+  height: 20px;
+  background: #000;
+  border-radius: 50%;
+}
+
+.eye-line {
+  width: 100px;
+  height: 3px;
+  background: #000;
+  display: inline-block;
+}
+
+.eye-box {
+  width: 100px;
+  height: 60px;
+  background: #000;
+  display: inline-block;
+  border-radius: 5px;
+  box-shadow: 10px 10px 0 rgba(0, 0, 0, 0.2);
+}
+
+.subtitle {
+  font-size: 18px;
+  color: #999;
+  margin-top: 20px;
+}
+
+/* Form Styles */
+.form-group {
+  margin-bottom: 25px;
+  text-align: left;
+}
+
+.form-group label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 16px;
+  font-weight: 500;
+  color: #000;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 15px;
+  font-size: 16px;
+  border: 2px solid #e0e0e0;
+  border-radius: 8px;
+  background: #f8f8f8;
+  transition: border-color 0.3s;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: #4285f4;
+  background: #fff;
+}
+
+/* Button Styles */
+.btn {
+  width: 100%;
+  padding: 15px 30px;
+  font-size: 16px;
+  font-weight: 500;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+  margin-bottom: 15px;
+}
+
+.btn-primary {
+  background: #4285f4;
+  color: white;
+}
+
+.btn-primary:hover {
+  background: #3367d6;
+}
+
+.btn-secondary {
+  background: #e8f0fe;
+  color: #4285f4;
+}
+
+.btn-secondary:hover {
+  background: #d2e3fc;
+}
+
+.link-button {
+  background: none;
+  border: none;
+  color: #4285f4;
+  cursor: pointer;
+  font-size: 16px;
+  text-decoration: none;
+  display: inline-block;
+  margin-top: 10px;
+}
+
+.link-button:hover {
+  text-decoration: underline;
+}
+
+/* Header with Device Info */
+.header {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+}
+
+.btn-small {
+  width: auto;
+  padding: 10px 20px;
+  font-size: 14px;
+  background: #e8f0fe;
+  color: #4285f4;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.btn-small:hover {
+  background: #d2e3fc;
+}
+
+/* Progress Bar */
+.progress-container {
+  margin: 40px 0;
+}
+
+.progress-text {
+  font-size: 18px;
+  color: #999;
+  margin-bottom: 20px;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background: #e0e0e0;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: #4285f4;
+  border-radius: 10px;
+  animation: progress 3s ease-in-out infinite;
+}
+
+@keyframes progress {
+  0% { width: 0%; }
+  50% { width: 60%; }
+  100% { width: 100%; }
+}
+
+/* Calibration Cursor */
+.cursor-preview {
+  margin: 40px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+}
+
+.cursor-dot {
+  width: 30px;
+  height: 30px;
+  background: #4285f4;
+  border-radius: 50%;
+}
+
+.cursor-label {
+  font-size: 18px;
+  color: #999;
+}
+
+/* Page Title with Icon */
+.page-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin-bottom: 60px;
+}
+
+.page-title .eye-shape {
+  width: 50px;
+  height: 30px;
+  border-width: 2px;
+}
+
+.page-title .eye-pupil {
+  width: 10px;
+  height: 10px;
+}
+
+.page-title h2 {
+  margin: 0;
+  font-size: 36px;
+}
+
+.title-icon {
+  width: 40px;
+  height: 25px;
+  border: 2px solid #000;
+  border-radius: 50%;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.title-icon-pupil {
+  width: 8px;
+  height: 8px;
+  background: #000;
+  border-radius: 50%;
+}
+
+/* Success Icon */
+.success-icon {
+  color: #34a853;
+  font-size: 40px;
+  margin-bottom: 20px;
+}
+
+.success-icon .eye-shape {
+  border-color: #34a853;
+}
+
+.success-icon .eye-pupil {
+  background: #34a853;
+}

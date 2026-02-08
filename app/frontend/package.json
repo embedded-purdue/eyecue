@@ -1,0 +1,21 @@
+{
+  "name": "eyecue-frontend",
+  "version": "1.0.0",
+  "description": "EyeCue Electron Frontend",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --debug"
+  },
+  "keywords": [
+    "eyecue",
+    "electron",
+    "eye-tracking"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0"
+  },
+  "dependencies": {}
+}

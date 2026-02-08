@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue - Connect</title>
+  <link rel="stylesheet" href="../styles/main.css">
+</head>
+<body>
+  <div class="container">
+    <div class="page-title">
+      <div class="title-icon">
+        <div class="title-icon-pupil"></div>
+      </div>
+      <h2>Cue Connect</h2>
+    </div>
+
+    <form id="connectForm">
+      <div class="form-group">
+        <label for="networkName">Network Name</label>
+        <input type="text" id="networkName" name="networkName" required>
+      </div>
+
+      <div class="form-group">
+        <label for="networkPassword">Network Password</label>
+        <input type="password" id="networkPassword" name="networkPassword" required>
+      </div>
+
+      <div class="form-group">
+        <label for="serialPort">Serial Port</label>
+        <select id="serialPort" name="serialPort" required>
+          <option value="">Port</option>
+          <option value="auto">Auto-detect</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Connect</button>
+    </form>
+
+    <a href="calibration.html" class="link-button">Proceed With Wired Connection</a>
+  </div>
+
+  <script src="../scripts/connect.js"></script>
+</body>
+</html>

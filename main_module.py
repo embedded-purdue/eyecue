@@ -11,7 +11,7 @@ from metrics_collector import MetricsCollector
 def main():
     # --- Configuration ---
     # Set your ESP32 IP address or use 0 for default webcam
-    camera_source = "http://192.168.4.49/stream" # I.P. address running shell script
+    camera_source = 0 # y"http://192.168.4.49/stream" # I.P. address running shell script
     screen_w, screen_h = 1920, 1080 # Update to your monitor resolution
     
     # --- Initialization ---

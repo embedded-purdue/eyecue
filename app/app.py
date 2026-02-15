@@ -4,9 +4,9 @@ Flask core routes for the EyeCue app.
 
 from flask import Flask, jsonify
 
-from .routes.cursor import cursor_bp
-from .routes.serial import serial_bp
-from .routes.prefs import prefs_bp
+from routes.cursor import cursor_bp
+from routes.serial import serial_bp
+from routes.prefs import prefs_bp
 
 
 def create_app() -> Flask:

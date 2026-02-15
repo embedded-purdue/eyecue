@@ -1,6 +1,6 @@
 from flask import Blueprint, request, jsonify
 
-from ..prefs import load_prefs, save_prefs, DEFAULT_PREFS
+from prefs_utils import load_prefs, save_prefs, DEFAULT_PREFS
 
 
 prefs_bp = Blueprint("prefs", __name__, url_prefix="/prefs")

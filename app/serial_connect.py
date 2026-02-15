@@ -32,11 +32,11 @@ MAGIC = b"CFGW"
 BAUD = 115200
 
 
-def list_serial_ports() -> List[list_ports.ListPortInfo]:
+def list_serial_ports():
     return list(list_ports.comports())
 
 
-def score_port(p: list_ports.ListPortInfo) -> int:
+def score_port(p) -> int:
     """
     Heuristics to pick "most likely ESP32" if multiple ports exist.
     You can tweak these checks for your environment.

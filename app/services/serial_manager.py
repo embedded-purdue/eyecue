@@ -8,7 +8,7 @@ import json
 import threading
 from typing import Any, Dict, List, Optional
 
-from .. import serial_connect
+import serial_connect
 
 
 class SerialManager:
@@ -35,6 +35,7 @@ class SerialManager:
         return results
 
     def connect(self, port: str, ssid: str, password: str, baud: int = serial_connect.BAUD) -> None:
+        print("connecting")
         self.disconnect()
         ser = None
         try:

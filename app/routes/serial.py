@@ -1,7 +1,7 @@
 from flask import Blueprint, request, jsonify
 
-from ..prefs import load_prefs, save_prefs, DEFAULT_PREFS
-from ..services.serial_manager import serial_manager
+from prefs_utils import load_prefs, save_prefs, DEFAULT_PREFS
+from services.serial_manager import serial_manager
 
 serial_bp = Blueprint('serial', __name__, url_prefix='/serial')
 

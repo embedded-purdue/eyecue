@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue - Advanced Settings</title>
+  <link rel="stylesheet" href="../styles/main.css">
+  <style>
+    body {
+      padding: 40px;
+    }
+
+    .settings-container {
+      max-width: 800px;
+      width: 100%;
+    }
+
+    .settings-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 40px;
+    }
+
+    .setting-group {
+      margin-bottom: 30px;
+    }
+
+    .setting-label {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 16px;
+      font-weight: 500;
+      color: #000;
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .slider {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #d3d3d3;
+      outline: none;
+      border-radius: 5px;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      background: #4285f4;
+      cursor: pointer;
+      border-radius: 50%;
+    }
+
+    .slider::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      background: #4285f4;
+      cursor: pointer;
+      border-radius: 50%;
+      border: none;
+    }
+
+    .slider-value {
+      min-width: 40px;
+      text-align: right;
+      font-weight: 600;
+      color: #666;
+    }
+
+    .btn-back {
+      margin-top: 30px;
+    }
+
+    select.form-control {
+      width: 100%;
+      padding: 15px;
+      font-size: 16px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      background: #f8f8f8;
+      transition: border-color 0.3s;
+    }
+
+    select.form-control:focus {
+      outline: none;
+      border-color: #4285f4;
+      background: #fff;
+    }
+  </style>
+</head>
+<body>
+  <div class="settings-container">
+    <div class="settings-header">
+      <div class="page-title">
+        <div class="title-icon success-icon">
+          <div class="title-icon-pupil"></div>
+        </div>
+        <h2>Cue Connect</h2>
+      </div>
+      <button class="btn-small" id="deviceInfoBtn">Device Info</button>
+    </div>
+
+    <h2 style="margin-bottom: 30px;">Advanced Settings Menu</h2>
+
+    <div class="setting-group">
+      <label class="setting-label">Preference 1</label>
+      <select class="form-control" id="preference1">
+        <option value="default">Preference 1</option>
+        <option value="option1">Option 1</option>
+        <option value="option2">Option 2</option>
+        <option value="option3">Option 3</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Preference 2</label>
+      <select class="form-control" id="preference2">
+        <option value="default">Preference 2</option>
+        <option value="option1">Option 1</option>
+        <option value="option2">Option 2</option>
+        <option value="option3">Option 3</option>
+      </select>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Horizontal Sensitivity</label>
+      <div class="slider-container">
+        <input type="range" min="0" max="100" value="50" class="slider" id="horizontalSensitivity">
+        <span class="slider-value" id="horizontalValue">50</span>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Vertical Sensitivity</label>
+      <div class="slider-container">
+        <input type="range" min="0" max="100" value="50" class="slider" id="verticalSensitivity">
+        <span class="slider-value" id="verticalValue">50</span>
+      </div>
+    </div>
+
+    <button class="btn btn-primary btn-back" id="backBtn">Back</button>
+  </div>
+
+  <script src="../scripts/advanced-settings.js"></script>
+</body>
+</html>

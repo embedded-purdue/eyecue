@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue Server Control</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 16px;
+      padding: 40px;
+      max-width: 500px;
+      width: 100%;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    }
+
+    h1 {
+      font-size: 32px;
+      margin-bottom: 10px;
+      color: #333;
+    }
+
+    .subtitle {
+      color: #666;
+      margin-bottom: 30px;
+      font-size: 16px;
+    }
+
+    .status {
+      padding: 15px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 500;
+    }
+
+    .status.online {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .status.offline {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+    .status.online .status-dot {
+      background: #28a745;
+    }
+
+    .status.offline .status-dot {
+      background: #dc3545;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .btn {
+      width: 100%;
+      padding: 15px;
+      font-size: 16px;
+      font-weight: 600;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 10px;
+    }
+
+    .btn-primary {
+      background: #667eea;
+      color: white;
+    }
+
+    .btn-primary:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn-secondary {
+      background: #e9ecef;
+      color: #495057;
+    }
+
+    .btn-secondary:hover {
+      background: #dee2e6;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin: 20px 0;
+    }
+
+    .info-item {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 8px;
+    }
+
+    .info-label {
+      font-size: 12px;
+      color: #6c757d;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 5px;
+    }
+
+    .info-value {
+      font-size: 18px;
+      font-weight: 600;
+      color: #333;
+    }
+
+    .log {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 15px;
+      max-height: 150px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      color: #495057;
+      margin-top: 20px;
+    }
+
+    .log-entry {
+      margin-bottom: 5px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🎯 EyeCue Server</h1>
+    <p class="subtitle">Flask Backend Control Panel</p>
+
+    <div id="status" class="status offline">
+      <div class="status-dot"></div>
+      <span>Checking server status...</span>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-item">
+        <div class="info-label">Port</div>
+        <div class="info-value">5001</div>
+      </div>
+      <div class="info-item">
+        <div class="info-label">Environment</div>
+        <div class="info-value">Development</div>
+      </div>
+    </div>
+
+    <button id="restartBtn" class="btn btn-primary">🔄 Restart Server</button>
+    <button id="checkBtn" class="btn btn-secondary">🔍 Check Status</button>
+
+    <div class="log" id="log">
+      <div class="log-entry">Server control panel loaded...</div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = 'http://127.0.0.1:5001';
+    const statusDiv = document.getElementById('status');
+    const logDiv = document.getElementById('log');
+    const restartBtn = document.getElementById('restartBtn');
+    const checkBtn = document.getElementById('checkBtn');
+
+    function addLog(message) {
+      const entry = document.createElement('div');
+      entry.className = 'log-entry';
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    }
+
+    async function checkServerStatus() {
+      try {
+        const response = await fetch(`${API_BASE}/health`);
+        const data = await response.json();
+        
+        if (data.status === 'ok') {
+          statusDiv.className = 'status online';
+          statusDiv.innerHTML = '<div class="status-dot"></div><span>Server is running</span>';
+          addLog('✅ Server is healthy');
+          return true;
+        }
+      } catch (error) {
+        statusDiv.className = 'status offline';
+        statusDiv.innerHTML = '<div class="status-dot"></div><span>Server is offline</span>';
+        addLog('❌ Server is not responding');
+        return false;
+      }
+    }
+
+    async function restartServer() {
+      restartBtn.disabled = true;
+      restartBtn.textContent = '⏳ Restarting...';
+      addLog('🔄 Restart command sent...');
+
+      // Call the restart script
+      try {
+        // In a real scenario, you'd have an endpoint to trigger restart
+        // For now, we'll just simulate and check after a delay
+        addLog('💡 Run: ./restart_server.sh in terminal to restart');
+        
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        await checkServerStatus();
+      } catch (error) {
+        addLog(`⚠️ Error: ${error.message}`);
+      } finally {
+        restartBtn.disabled = false;
+        restartBtn.textContent = '🔄 Restart Server';
+      }
+    }
+
+    // Event listeners
+    restartBtn.addEventListener('click', restartServer);
+    checkBtn.addEventListener('click', checkServerStatus);
+
+    // Check status on load and periodically
+    checkServerStatus();
+    setInterval(checkServerStatus, 10000); // Check every 10 seconds
+  </script>
+</body>
+</html>

@@ -5,6 +5,162 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>EyeCue - Calibration</title>
   <link rel="stylesheet" href="../styles/main.css">
+  <style>
+    .calibration-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      background: #e0e0e0;
+      z-index: 1000;
+    }
+
+    .calibration-overlay.active {
+      display: block;
+    }
+
+    .calibration-grid {
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(3, 1fr);
+      gap: 0;
+      padding: 40px;
+    }
+
+    .calibration-node {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+
+    .node-target {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: #999;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      position: relative;
+    }
+
+    .node-target::before,
+    .node-target::after {
+      content: '';
+      position: absolute;
+      background: white;
+    }
+
+    .node-target::before {
+      width: 20px;
+      height: 2px;
+    }
+
+    .node-target::after {
+      width: 2px;
+      height: 20px;
+    }
+
+    .node-target.active {
+      background: #4caf50;
+      width: 80px;
+      height: 80px;
+      animation: pulse-node 1.5s infinite;
+    }
+
+    .node-target.completed {
+      background: #4285f4;
+      cursor: default;
+    }
+
+    .node-target.inactive {
+      opacity: 0.4;
+      pointer-events: none;
+    }
+
+    @keyframes pulse-node {
+      0%, 100% {
+        transform: scale(1);
+        box-shadow: 0 0 0 0 rgba(76, 175, 80, 0.7);
+      }
+      50% {
+        transform: scale(1.05);
+        box-shadow: 0 0 0 20px rgba(76, 175, 80, 0);
+      }
+    }
+
+    .calibration-header {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      background: #ffa726;
+      padding: 20px;
+      text-align: center;
+      font-size: 24px;
+      font-weight: 600;
+      color: #000;
+      z-index: 1001;
+    }
+
+    .calibration-instructions {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.95);
+      padding: 20px 40px;
+      border-radius: 12px;
+      text-align: center;
+      font-size: 16px;
+      color: #333;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+      z-index: 1001;
+    }
+
+    .user-cursor {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      background: #4285f4;
+      border-radius: 50%;
+      pointer-events: none;
+      z-index: 1002;
+      transform: translate(-50%, -50%);
+    }
+
+    .completion-modal {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: white;
+      padding: 40px;
+      border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+      z-index: 1003;
+      text-align: center;
+      min-width: 400px;
+    }
+
+    .completion-modal.active {
+      display: block;
+    }
+
+    .completion-modal h2 {
+      margin-bottom: 20px;
+      color: #4caf50;
+    }
+
+  </style>
 </head>
 <body>
   <div class="header">
@@ -27,6 +183,27 @@
     </div>
 
     <button class="btn btn-primary" id="fullscreenBtn">Enter Fullscreen</button>
+  </div>
+
+  <!-- Calibration Overlay -->
+  <div class="calibration-overlay" id="calibrationOverlay">
+    <div class="calibration-header">Calibration Screen</div>
+    
+    <div class="calibration-grid" id="calibrationGrid">
+      <!-- 9 nodes will be generated here -->
+    </div>
+
+    <div class="calibration-instructions" id="calibrationInstructions">
+      Timed based calibration on each node. If the user doesn't reach the node by a certain amount of time we prompt to confirm if they were looking at the node prompted. If they were then we calibrate the sensitivity etc. to match current position with active node
+    </div>
+
+    <div class="user-cursor" id="userCursor"></div>
+  </div>
+
+  <!-- Completion Modal -->
+  <div class="completion-modal" id="completionModal">
+    <h2>Calibration Complete</h2>
+    <button class="btn btn-primary" id="exitFullscreenBtn">Exit Fullscreen</button>
   </div>
 
   <script src="../scripts/calibration.js"></script>

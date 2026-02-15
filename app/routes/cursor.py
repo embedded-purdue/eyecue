@@ -1,6 +1,10 @@
-from flask import Blueprint
-from ...CursorController import CursorController
-from flask import request, jsonify
+from flask import Blueprint, request, jsonify
+import sys
+import os
+
+# Add parent directory to path to import CursorController
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from CursorController import CursorController
 
 cursor_bp = Blueprint('cursor', __name__, url_prefix='/cursor')
 

@@ -222,7 +222,7 @@ class GazeAngleTester:
             self.frame_count += 1
             
             # detect pupil
-            pupil_center, roi_center, bbox = detect_pupil_contour(frame)
+            pupil_center, bbox = detect_pupil_contour(frame)
             
             # stabilize pupil position
             if pupil_center is not None:
@@ -242,7 +242,7 @@ class GazeAngleTester:
             # extract gaze data and output to terminal
             gaze_data = None
             if stable_pupil_center is not None:
-                gaze_data = self.gaze_tracker.extract_gaze_numbers(stable_pupil_center, roi_center, frame.shape)
+                gaze_data = self.gaze_tracker.extract_gaze_numbers(stable_pupil_center, frame.shape)
                 if gaze_data:
                     self.current_angles = gaze_data['single_angles']
                     # calculate screen position using cursorcontroller's method

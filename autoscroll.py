@@ -48,7 +48,7 @@ while True:
         break
 
     # detect pupil center
-    (full_cx, full_cy), _, _ = detect_pupil_contour(frame)
+    (full_cx, full_cy), _ = detect_pupil_contour(frame)
     if full_cx is not None:
         h, w, _ = frame.shape
 

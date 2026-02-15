@@ -98,7 +98,7 @@ class BlinkDetector:
 
     def detect_blink(self, frame):
         """detect blink when pupil disappears OR moves away from focus"""
-        pupil_center, roi_center, bbox = detect_pupil_contour(frame)
+        pupil_center, bbox = detect_pupil_contour(frame)
         current_time = time.time()
         
         # Update focus area based on current pupil position

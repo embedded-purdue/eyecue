@@ -13,6 +13,7 @@ import requests
 from io import BytesIO
 from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
+from eyeball_model import EyeballModel
 
 class ESP32CameraCapture:
     """helper class to capture frames from esp32 camera"""
@@ -101,6 +102,8 @@ class ContourGazeTracker:
         # metrics collection
         self.enable_metrics = enable_metrics
         self.metrics = MetricsCollector(save_interval=metrics_save_interval) if enable_metrics else None
+        # eyeball sphere model – lazy-initialised on first frame so we know frame dimensions
+        self.eyeball_model = None
         print("contour gaze tracker - press 'q' to quit")
         print("output: 3d gaze vectors and angles every 30 frames")
         if output_video:
@@ -109,50 +112,36 @@ class ContourGazeTracker:
             print(f"[info] metrics collection enabled (prints every {metrics_save_interval} frames)")
 
 
-    def extract_gaze_numbers(self, pupil_center, roi_center, frame_shape):
-        """extract 3d gaze vectors and angles - same format as mediapipe version"""
-        
+    def extract_gaze_numbers(self, pupil_center, frame_shape):
+        """
+        Extract 3-D gaze vectors and angles using a sphere-based eyeball model.
+
+        Replaces the old linear pixel-offset approach with a proper pinhole
+        camera ray → sphere intersection.
+
+        The eyeball rotation centre is estimated adaptively each frame by
+        intersecting the camera ray with the eye sphere (radius 12 mm) and
+        nudging the center estimate with an exponential moving average.
+
+        Returns the same dict keys as before so all callers work unchanged.
+        Also includes 'eye_center_3d' and 'tilt_deg' for debugging.
+        """
         if pupil_center is None:
             return None
-        
-        # get pupil coords
-        pupil_x, pupil_y = pupil_center
-        
-        # calc exact roi center (middle of roi) - roi_center parameter is not used
+
+        # Lazy-init: we need the frame dimensions to set up the camera model
         h, w = frame_shape[:2]
-        roi_width = int(w * 0.6)  # roi width
-        roi_height = int(h * 0.5)  # roi height
-        roi_center_x = int(w * 0.2) + roi_width // 2  # exact center of roi
-        roi_center_y = int(h * 0.3) + roi_height // 2  # exact center of roi
-        
-        # calc deviation from roi center (in pixels)
-        deviation_x = pupil_x - roi_center_x
-        deviation_y = pupil_y - roi_center_y
-        
-        # normalize by roi dimensions - simple x-y plane
-        offset_x = deviation_x / roi_width
-        offset_y = -deviation_y / roi_height  # flip y so top = positive
-        
-        # convert to 3d gaze vectors (assuming 12mm eye radius)
-        eye_radius = 12.0
-        
-        # single eye 3d vector
-        x_3d = offset_x * eye_radius
-        y_3d = offset_y * eye_radius
-        z_3d = math.sqrt(max(0, eye_radius**2 - x_3d**2 - y_3d**2))
-        gaze_vector = np.array([x_3d, y_3d, z_3d])
-        gaze_vector = gaze_vector / np.linalg.norm(gaze_vector)
-        
-        # calc angles (in degrees)
-        theta_h = math.degrees(math.atan2(gaze_vector[0], gaze_vector[2]))
-        theta_v = math.degrees(math.atan2(gaze_vector[1], gaze_vector[2]))
-        
-        # single eye tracking - no fake left/right data
-        return {
-            'single_gaze_vector': gaze_vector.tolist(),
-            'single_angles': [theta_h, theta_v],
-            'single_offset': [offset_x, offset_y]
-        }
+        if self.eyeball_model is None:
+            self.eyeball_model = EyeballModel(frame_w=w, frame_h=h)
+            print(f"[info] eyeball model initialised: f={self.eyeball_model.f:.0f}px, "
+                  f"depth={self.eyeball_model.init_depth}mm")
+
+        # Update the running eyeball-center estimate with this observation.
+        # EyeballModel.update() is identical for the same (x,y) so duplicate
+        # calls within one frame (metrics + display) do not double-update.
+        self.eyeball_model.update(pupil_center)
+
+        return self.eyeball_model.get_gaze_data(pupil_center)
 
     def run(self, camera_index=0):
         """main tracking loop"""
@@ -228,7 +217,7 @@ class ContourGazeTracker:
             # time detection for metrics
             detection_start = time.time()
             # detect pupil using contour analysis
-            pupil_center, roi_center, bbox = detect_pupil_contour(frame)
+            pupil_center, bbox = detect_pupil_contour(frame)
             detection_time = time.time() - detection_start if self.enable_metrics else None
             
             # stabilize pupil position using exponential moving average
@@ -255,14 +244,14 @@ class ContourGazeTracker:
             if self.enable_metrics and self.metrics:
                 gaze_angles = None
                 if stable_pupil_center is not None:
-                    gaze_data = self.extract_gaze_numbers(stable_pupil_center, roi_center, frame.shape)
+                    gaze_data = self.extract_gaze_numbers(stable_pupil_center, frame.shape)
                     if gaze_data:
                         gaze_angles = tuple(gaze_data['single_angles'])
                 self.metrics.record_frame(stable_pupil_center, detection_time, gaze_angles)
             
             # extract gaze data using stabilized position
             if stable_pupil_center is not None:
-                gaze_data = self.extract_gaze_numbers(stable_pupil_center, roi_center, frame.shape)
+                gaze_data = self.extract_gaze_numbers(stable_pupil_center, frame.shape)
                 
                 # print every 30 frames
                 if self.frame_count % 30 == 0:

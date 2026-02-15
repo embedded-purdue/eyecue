@@ -12,10 +12,10 @@ sleep 1
 echo "Previous server stopped."
 echo "Starting new server..."
 
-# Start the server in the background
-python3 run_server.py &
+# Start the server in the background using venv python
+/Users/williamzhang/Documents/GitHub/eyecue/.venv/bin/python run_server.py &
 
 sleep 2
 
 echo "Server restarted!"
-echo "Access at: http://127.0.0.1:5000"
+echo "Access at: http://127.0.0.1:5001"

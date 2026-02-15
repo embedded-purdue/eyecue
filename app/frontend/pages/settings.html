@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue - Settings</title>
+  <link rel="stylesheet" href="../styles/main.css">
+  <style>
+    body {
+      padding: 40px;
+    }
+
+    .settings-container {
+      max-width: 800px;
+      width: 100%;
+    }
+
+    .settings-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 40px;
+    }
+
+    .setting-group {
+      margin-bottom: 30px;
+    }
+
+    .setting-label {
+      display: block;
+      margin-bottom: 10px;
+      font-size: 16px;
+      font-weight: 500;
+      color: #000;
+    }
+
+    .slider-container {
+      display: flex;
+      align-items: center;
+      gap: 15px;
+    }
+
+    .slider {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: #d3d3d3;
+      outline: none;
+      border-radius: 5px;
+    }
+
+    .slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 20px;
+      height: 20px;
+      background: #4285f4;
+      cursor: pointer;
+      border-radius: 50%;
+    }
+
+    .slider::-moz-range-thumb {
+      width: 20px;
+      height: 20px;
+      background: #4285f4;
+      cursor: pointer;
+      border-radius: 50%;
+      border: none;
+    }
+
+    .slider-value {
+      min-width: 40px;
+      text-align: right;
+      font-weight: 600;
+      color: #666;
+    }
+
+    .button-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 15px;
+      margin-top: 30px;
+    }
+
+    .btn-wide {
+      grid-column: 1 / -1;
+    }
+
+    .connection-mode {
+      display: flex;
+      gap: 10px;
+    }
+
+    .mode-option {
+      padding: 10px 20px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      background: white;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+
+    .mode-option.active {
+      border-color: #4285f4;
+      background: #e8f0fe;
+      color: #4285f4;
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="settings-container">
+    <div class="settings-header">
+      <div class="page-title">
+        <div class="title-icon success-icon">
+          <div class="title-icon-pupil"></div>
+        </div>
+        <h2>Cue Connect</h2>
+      </div>
+      <button class="btn-small" id="deviceInfoBtn">Device Info</button>
+    </div>
+
+    <h2 style="margin-bottom: 30px;">Settings Menu</h2>
+
+    <div class="setting-group">
+      <label class="setting-label">Connection Mode</label>
+      <div class="connection-mode">
+        <div class="mode-option active" data-mode="wifi" id="wifiMode">WiFi</div>
+        <div class="mode-option" data-mode="wired" id="wiredMode">Wired</div>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Horizontal Sensitivity</label>
+      <div class="slider-container">
+        <input type="range" min="0" max="100" value="50" class="slider" id="horizontalSensitivity">
+        <span class="slider-value" id="horizontalValue">50</span>
+      </div>
+    </div>
+
+    <div class="setting-group">
+      <label class="setting-label">Vertical Sensitivity</label>
+      <div class="slider-container">
+        <input type="range" min="0" max="100" value="50" class="slider" id="verticalSensitivity">
+        <span class="slider-value" id="verticalValue">50</span>
+      </div>
+    </div>
+
+    <div class="button-group">
+      <button class="btn btn-primary" id="recalibrateBtn">Recalibrate</button>
+      <button class="btn btn-primary" id="advancedSettingsBtn">Advanced Settings</button>
+      <button class="btn btn-secondary" id="liveInfoBtn">Live Info View</button>
+      <button class="btn btn-secondary" id="flashWifiBtn">Flash WiFi Information</button>
+    </div>
+  </div>
+
+  <script src="../scripts/settings.js"></script>
+</body>
+</html>

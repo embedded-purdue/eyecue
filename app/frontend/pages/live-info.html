@@ -1,0 +1,170 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue - Live Info View</title>
+  <link rel="stylesheet" href="../styles/main.css">
+  <style>
+    body {
+      padding: 40px;
+      background: #2c2c2c;
+    }
+
+    .live-info-container {
+      max-width: 900px;
+      width: 100%;
+      background: white;
+      padding: 40px;
+      border-radius: 16px;
+    }
+
+    .live-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 30px;
+    }
+
+    .live-title {
+      font-size: 32px;
+      font-weight: 600;
+      color: #000;
+    }
+
+    .connection-status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-weight: 500;
+      margin-bottom: 20px;
+    }
+
+    .connection-status.searching {
+      background: #fff3cd;
+      color: #856404;
+      border: 1px solid #ffeaa7;
+    }
+
+    .connection-status.connected {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .connection-status.disconnected {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      animation: pulse 2s infinite;
+    }
+
+   .status-dot.searching {
+      background: #ffc107;
+    }
+
+    .status-dot.connected {
+      background: #28a745;
+    }
+
+    .status-dot.disconnected {
+      background: #dc3545;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .terminal-container {
+      background: #1e1e1e;
+      border-radius: 8px;
+      padding: 20px;
+      min-height: 400px;
+      max-height: 500px;
+      overflow-y: auto;
+      font-family: 'Courier New', monospace;
+      font-size: 14px;
+      color: #d4d4d4;
+      margin-bottom: 20px;
+    }
+
+    .terminal-line {
+      margin-bottom: 8px;
+      line-height: 1.6;
+    }
+
+    .terminal-prompt {
+      color: #4caf50;
+    }
+
+    .terminal-info {
+      color: #2196f3;
+    }
+
+    .terminal-warning {
+      color: #ff9800;
+    }
+
+    .terminal-error {
+      color: #f44336;
+    }
+
+    .terminal-success {
+      color: #4caf50;
+    }
+
+    .terminal-timestamp {
+      color: #888;
+    }
+
+    .btn-back-live {
+      width: auto;
+      min-width: 200px;
+    }
+  </style>
+</head>
+<body>
+  <div class="live-info-container">
+    <div class="live-header">
+      <div class="page-title">
+        <div class="title-icon success-icon">
+          <div class="title-icon-pupil"></div>
+        </div>
+        <h2 class="live-title">Cue Connect</h2>
+      </div>
+      <button class="btn-small" id="deviceInfoBtn">Device Info</button>
+    </div>
+
+    <h2 style="margin-bottom: 20px;">Live Info View</h2>
+
+    <div class="connection-status searching" id="connectionStatus">
+      <div class="status-dot searching" id="statusDot"></div>
+      <span id="statusText">Searching for ESP32 device...</span>
+    </div>
+
+    <div class="terminal-container" id="terminal">
+      <div class="terminal-line">
+        <span class="terminal-prompt">&gt;&gt;</span> 
+        <span>Initializing connection...</span>
+      </div>
+      <div class="terminal-line">
+        <span class="terminal-timestamp">[00:00:00]</span>
+        <span class="terminal-info"> Scanning for Bluetooth devices...</span>
+      </div>
+    </div>
+
+    <button class="btn btn-secondary btn-back-live" id="backBtn">Back</button>
+  </div>
+
+  <script src="../scripts/live-info.js"></script>
+</body>
+</html>

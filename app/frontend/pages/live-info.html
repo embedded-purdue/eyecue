@@ -7,27 +7,32 @@
   <link rel="stylesheet" href="../styles/main.css">
   <style>
     body {
-      padding: 40px;
+      padding: 20px;
       background: #2c2c2c;
+      min-height: 100vh;
+      box-sizing: border-box;
     }
 
     .live-info-container {
-      max-width: 900px;
+      max-width: 1000px;
       width: 100%;
       background: white;
-      padding: 40px;
+      padding: 30px;
       border-radius: 16px;
+      box-sizing: border-box;
     }
 
     .live-header {
       display: flex;
       justify-content: space-between;
       align-items: center;
-      margin-bottom: 30px;
+      margin-bottom: 24px;
+      flex-wrap: wrap;
+      gap: 15px;
     }
 
     .live-title {
-      font-size: 32px;
+      font-size: 28px;
       font-weight: 600;
       color: #000;
     }
@@ -40,6 +45,7 @@
       border-radius: 8px;
       font-weight: 500;
       margin-bottom: 20px;
+      flex-wrap: wrap;
     }
 
     .connection-status.searching {
@@ -60,14 +66,21 @@
       border: 1px solid #f5c6cb;
     }
 
+    .connection-status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
     .status-dot {
       width: 10px;
       height: 10px;
       border-radius: 50%;
       animation: pulse 2s infinite;
+      flex-shrink: 0;
     }
 
-   .status-dot.searching {
+    .status-dot.searching {
       background: #ffc107;
     }
 
@@ -79,31 +92,62 @@
       background: #dc3545;
     }
 
+    .status-dot.error {
+      background: #dc3545;
+    }
+
     @keyframes pulse {
       0%, 100% { opacity: 1; }
       50% { opacity: 0.5; }
     }
 
+    .info-panel {
+      background: #f8f9fa;
+      border-radius: 8px;
+      padding: 16px;
+      margin-bottom: 20px;
+      border: 1px solid #dee2e6;
+    }
+
+    .info-panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 12px;
+      color: #333;
+    }
+
+    .info-row {
+      font-size: 14px;
+      color: #555;
+      margin-bottom: 8px;
+      line-height: 1.6;
+      word-wrap: break-word;
+    }
+
+    .info-row:last-child {
+      margin-bottom: 0;
+    }
+
     .terminal-container {
       background: #1e1e1e;
       border-radius: 8px;
-      padding: 20px;
-      min-height: 400px;
-      max-height: 500px;
+      padding: 16px;
+      min-height: 300px;
+      max-height: 50vh;
       overflow-y: auto;
+      overflow-x: hidden;
       font-family: 'Courier New', monospace;
-      font-size: 14px;
+      font-size: 13px;
       color: #d4d4d4;
       margin-bottom: 20px;
+      box-sizing: border-box;
     }
 
     .terminal-line {
-      margin-bottom: 8px;
-      line-height: 1.6;
-    }
-
-    .terminal-prompt {
-      color: #4caf50;
+      margin-bottom: 6px;
+      line-height: 1.5;
+      word-wrap: break-word;
+      overflow-wrap: break-word;
     }
 
     .terminal-info {
@@ -128,7 +172,59 @@
 
     .btn-back-live {
       width: auto;
-      min-width: 200px;
+      min-width: 150px;
+    }
+
+    /* Responsive adjustments */
+    @media (max-width: 768px) {
+      body {
+        padding: 15px;
+      }
+
+      .live-info-container {
+        padding: 20px;
+      }
+
+      .live-title {
+        font-size: 24px;
+      }
+
+      .terminal-container {
+        font-size: 12px;
+        max-height: 40vh;
+      }
+
+      .info-panel {
+        padding: 12px;
+      }
+    }
+
+    @media (max-width: 480px) {
+      body {
+        padding: 10px;
+      }
+
+      .live-info-container {
+        padding: 15px;
+      }
+
+      .live-title {
+        font-size: 20px;
+      }
+
+      .connection-status {
+        font-size: 14px;
+        padding: 10px 15px;
+      }
+
+      .terminal-container {
+        font-size: 11px;
+        padding: 12px;
+      }
+
+      .btn-back-live {
+        width: 100%;
+      }
     }
   </style>
 </head>
@@ -144,25 +240,28 @@
       <button class="btn-small" id="deviceInfoBtn">Device Info</button>
     </div>
 
-    <h2 style="margin-bottom: 20px;">Live Info View</h2>
+    <h2 style="margin-bottom: 20px;">Live Connection Monitor</h2>
 
     <div class="connection-status searching" id="connectionStatus">
       <div class="status-dot searching" id="statusDot"></div>
-      <span id="statusText">Searching for ESP32 device...</span>
+      <span id="statusText">Initializing...</span>
     </div>
 
-    <div class="terminal-container" id="terminal">
-      <div class="terminal-line">
-        <span class="terminal-prompt">&gt;&gt;</span> 
-        <span>Initializing connection...</span>
-      </div>
-      <div class="terminal-line">
-        <span class="terminal-timestamp">[00:00:00]</span>
-        <span class="terminal-info"> Scanning for Bluetooth devices...</span>
+    <div class="info-panel">
+      <div class="info-panel-title">Connection Details</div>
+      <div class="info-row" id="wifiInfo"><strong>WiFi:</strong> Checking...</div>
+      <div class="info-row" id="serialInfo"><strong>Serial:</strong> Checking...</div>
+      <div class="info-row" id="cameraInfo"><strong>Camera:</strong> Checking...</div>
+    </div>
+
+    <div class="info-panel">
+      <div class="info-panel-title">Activity Log</div>
+      <div class="terminal-container" id="terminal">
+        <!-- Log entries will be added dynamically -->
       </div>
     </div>
 
-    <button class="btn btn-secondary btn-back-live" id="backBtn">Back</button>
+    <button class="btn btn-secondary btn-back-live" id="backBtn">Back to Settings</button>
   </div>
 
   <script src="../scripts/live-info.js"></script>

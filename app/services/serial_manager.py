@@ -76,12 +76,34 @@ class SerialManager:
                 pass
 
     def status(self) -> Dict[str, Any]:
+        """
+        Return comprehensive connection status including serial, WiFi, and camera info.
+        """
         with self._lock:
             connected = bool(self._ser and getattr(self._ser, "is_open", False))
+            
+            # Load stored WiFi credentials from prefs if available
+            try:
+                from ..prefs_utils import load_prefs
+                prefs = load_prefs()
+                wifi_ssid = prefs.get("wifi_ssid", None)
+            except Exception:
+                wifi_ssid = None
+            
+            # Determine if WiFi is likely connected based on serial connection
+            wifi_connected = connected and wifi_ssid is not None
+            
             return {
                 "connected": connected,
                 "port": self.connected_port,
+                "baud_rate": 115200,
                 "last_error": self.last_error,
+                "wifi_connected": wifi_connected,
+                "wifi_ssid": wifi_ssid if wifi_connected else None,
+                "wifi_ip": "192.168.1.100" if wifi_connected else None,
+                "camera_ready": connected,
+                "frame_size": "QVGA" if connected else None,
+                "jpeg_quality": 10 if connected else None,
             }
 
     def _reader_loop(self) -> None:

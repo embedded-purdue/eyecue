@@ -15,6 +15,7 @@ const cameraInfoElement = document.getElementById('cameraInfo');
 let pollInterval = null;
 let lastStatus = null;
 let isDestroyed = false;
+let isInitialized = false;
 
 // Add log entry to terminal (with memory management)
 function addLog(message, type = 'info') {
@@ -174,6 +175,13 @@ function stopPolling() {
 
 // Main initialization
 function initialize() {
+  // Prevent duplicate initialization
+  if (isInitialized) {
+    console.warn('Live Info View already initialized');
+    return;
+  }
+  isInitialized = true;
+  
   addLog('EyeCue Live Info View initialized', 'info');
   addLog('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'info');
   addLog('ESP32 Camera Server Connection Monitor', 'info');
@@ -186,43 +194,58 @@ function initialize() {
   startPolling();
 }
 
-// Back button
-document.getElementById('backBtn').addEventListener('click', () => {
-  stopPolling();
-  window.location.href = 'settings.html';
-});
+// Back button (attach only once)
+const backBtn = document.getElementById('backBtn');
+if (backBtn && !backBtn.dataset.listenerAttached) {
+  backBtn.dataset.listenerAttached = 'true';
+  backBtn.addEventListener('click', (e) => {
+    e.preventDefault();
+    stopPolling();
+    window.location.href = 'settings.html';
+  });
+}
 
-// Device Info modal
-document.getElementById('deviceInfoBtn').addEventListener('click', async () => {
-  try {
-    const response = await fetch(`${API_BASE}/serial/status`);
-    const data = await response.json();
+// Device Info modal (attach only once)
+const deviceInfoBtn = document.getElementById('deviceInfoBtn');
+if (deviceInfoBtn && !deviceInfoBtn.dataset.listenerAttached) {
+  deviceInfoBtn.dataset.listenerAttached = 'true';
+  deviceInfoBtn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     
-    if (data.ok) {
-      const status = data.data;
-      const connectionMode = localStorage.getItem('connectionMode') || 'wifi';
+    try {
+      const response = await fetch(`${API_BASE}/serial/status`, {
+        signal: AbortSignal.timeout(3000)
+      });
+      const data = await response.json();
       
+      if (data.ok) {
+        const status = data.data;
+        const connectionMode = localStorage.getItem('connectionMode') || 'wifi';
+        
+        alert(
+          `Device Info:\n\n` +
+          `Connection Mode: ${connectionMode.toUpperCase()}\n` +
+          `Serial Status: ${status.connected ? 'Connected' : 'Disconnected'}\n` +
+          `Port: ${status.port || 'N/A'}\n` +
+          `Baud Rate: ${status.baud_rate || 'N/A'}\n` +
+          `WiFi: ${status.wifi_connected ? 'Connected' : 'N/A'}\n` +
+          `SSID: ${status.wifi_ssid || 'N/A'}\n` +
+          `IP: ${status.wifi_ip || 'N/A'}\n` +
+          `Camera: ${status.camera_ready ? 'Ready' : 'N/A'}\n` +
+          `Last Error: ${status.last_error || 'None'}`
+        );
+      }
+    } catch (error) {
+      console.error('Device info fetch error:', error);
       alert(
         `Device Info:\n\n` +
-        `Connection Mode: ${connectionMode.toUpperCase()}\n` +
-        `Serial Status: ${status.connected ? 'Connected' : 'Disconnected'}\n` +
-        `Port: ${status.port || 'N/A'}\n` +
-        `Baud Rate: ${status.baud_rate || 'N/A'}\n` +
-        `WiFi: ${status.wifi_connected ? 'Connected' : 'N/A'}\n` +
-        `SSID: ${status.wifi_ssid || 'N/A'}\n` +
-        `IP: ${status.wifi_ip || 'N/A'}\n` +
-        `Camera: ${status.camera_ready ? 'Ready' : 'N/A'}\n` +
-        `Last Error: ${status.last_error || 'None'}`
+        `Unable to fetch device information.\n` +
+        `Make sure backend is running on port 5001.`
       );
     }
-  } catch (error) {
-    alert(
-      `Device Info:\n\n` +
-      `Unable to fetch device information.\n` +
-      `Make sure backend is running.`
-    );
-  }
-});
+  });
+}
 
 // Cleanup on page unload
 window.addEventListener('beforeunload', stopPolling);

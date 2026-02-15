@@ -1,7 +1,10 @@
+from flask import Blueprint, request, jsonify
+import sys
 import os
 
-import pyautogui
-from flask import Blueprint, request, jsonify
+# Add parent directory to path to import CursorController
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+from CursorController import CursorController
 
 cursor_bp = Blueprint('cursor', __name__, url_prefix='/cursor')
 

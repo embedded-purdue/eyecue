@@ -1,8 +1,8 @@
 # EyeCue Electron Frontend
 
-A basic Electron app that provides the setup sequence for the EyeCue eye-tracking device.
+An Electron app that provides the setup and calibration sequence for the EyeCue eye-tracking cursor device.
 
-## Setup Sequence
+## Device Setup Sequence
 
 1. **Welcome Screen** - Initial welcome with device connection prompt
 2. **Connection Form** - WiFi credentials and serial port selection

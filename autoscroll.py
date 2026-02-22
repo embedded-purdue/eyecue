@@ -1,33 +1,20 @@
-#!/usr/bin/env python3
-
-
 import time
+import pyautogui
 
-
-UP_THRESHOLD = 8       # degrees (head up)
-DOWN_THRESHOLD = -8    # degrees (head down)
-
-HOLD_DELAY = 0.8       # seconds before scroll starts
-SCROLL_INTERVAL = 0.35 # repeat scroll speed 
-# we can use calibiration values for these 
-
+UP_THRESHOLD = 8       # degrees
+DOWN_THRESHOLD = -8    # degrees
+HOLD_DELAY = 0.8       # seconds before scroll find these using calibiration
+SCROLL_INTERVAL = 0.35 # repeat scroll
 SCROLL_STEP = 60       # pixels per scroll event
 
-
 def autoscroll(angle_v, enter_t, last_scroll, active_zone):
-
     zone = None
-
-   
     if angle_v > UP_THRESHOLD:
         zone = "up"
-
     elif angle_v < DOWN_THRESHOLD:
         zone = "down"
 
     now = time.time()
-
-
     if zone != active_zone:
         active_zone = zone
         enter_t = now
@@ -37,17 +24,13 @@ def autoscroll(angle_v, enter_t, last_scroll, active_zone):
 
     hold_time = now - enter_t
 
- 
     if hold_time >= HOLD_DELAY and (now - last_scroll) >= SCROLL_INTERVAL:
-
         if active_zone == "up":
-            print("Scroll Up")
-
-        
-
+            pyautogui.scroll(SCROLL_STEP)   # scroll up
+            print("Scrolling Up")
         elif active_zone == "down":
-            print("Scroll Down")
-
+            pyautogui.scroll(-SCROLL_STEP)  # scroll down
+            print("Scrolling Down")
 
         last_scroll = now
 

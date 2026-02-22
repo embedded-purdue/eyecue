@@ -17,15 +17,21 @@ Env vars supported:
   ESP32_PORT (optional fixed port like COM5 or /dev/ttyUSB0)
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import json
 import time
 import getpass
-from typing import Optional, Tuple, List
+from typing import Any, Optional, Tuple, List
 
-import serial
-from serial.tools import list_ports
+try:
+    import serial
+    from serial.tools import list_ports
+except Exception:  # pragma: no cover - dependency availability
+    serial = None
+    list_ports = None
 
 
 MAGIC = b"CFGW"
@@ -33,6 +39,8 @@ BAUD = 115200
 
 
 def list_serial_ports():
+    if list_ports is None:
+        return []
     return list(list_ports.comports())
 
 
@@ -76,7 +84,9 @@ def pick_port(explicit: Optional[str] = None) -> str:
     return best.device
 
 
-def open_serial(port: str, baud: int = BAUD, timeout: float = 0.5) -> serial.Serial:
+def open_serial(port: str, baud: int = BAUD, timeout: float = 0.5) -> Any:
+    if serial is None:
+        raise RuntimeError("pyserial is not installed")
     ser = serial.Serial()
     ser.port = port
     ser.baudrate = baud

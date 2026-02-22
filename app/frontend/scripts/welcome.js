@@ -1,13 +1,29 @@
 /**
- * welcome.js - Welcome screen logic
+ * welcome.js - Startup routing for welcome screen.
  */
 
-// Auto-navigate to connect page after 2 seconds
-setTimeout(() => {
-  window.location.href = 'connect.html';
-}, 2000);
+let hasNavigated = false;
 
-// Or immediately on click
-document.body.addEventListener('click', () => {
-  window.location.href = 'connect.html';
-});
+function goTo(page) {
+  if (hasNavigated) return;
+  hasNavigated = true;
+  window.location.href = page;
+}
+
+async function bootstrapRoute() {
+  try {
+    const boot = await window.eyeApi.bootstrap();
+
+    if (boot.recommended_page && boot.recommended_page !== 'welcome.html') {
+      goTo(boot.recommended_page);
+      return;
+    }
+
+    setTimeout(() => goTo('connect.html'), 2000);
+  } catch (err) {
+    setTimeout(() => goTo('connect.html'), 2000);
+  }
+}
+
+document.body.addEventListener('click', () => goTo('connect.html'));
+bootstrapRoute();

@@ -1,47 +1,31 @@
 /**
- * calibration.js - Calibration screen logic
+ * calibration.js - Calibration flow backed by Flask session state.
  */
 
-const API_BASE = 'http://127.0.0.1:5001';
 let currentNodeIndex = 0;
 let calibrationData = [];
-const totalNodes = 9;
+let totalNodes = 9;
+let sessionId = null;
 
-// Generate 9 calibration nodes
-function generateCalibrationNodes() {
-  const grid = document.getElementById('calibrationGrid');
-  grid.innerHTML = '';
-  
-  for (let i = 0; i < totalNodes; i++) {
-    const nodeContainer = document.createElement('div');
-    nodeContainer.className = 'calibration-node';
-    
-    const nodeTarget = document.createElement('div');
-    nodeTarget.className = 'node-target inactive';
-    nodeTarget.dataset.index = i;
-    nodeTarget.dataset.position = getNodePosition(i);
-    
-    nodeTarget.addEventListener('click', () => handleNodeClick(i, nodeTarget));
-    
-    nodeContainer.appendChild(nodeTarget);
-    grid.appendChild(nodeContainer);
-  }
-  
-  // Activate first node
-  activateNode(0);
-}
-
-// Get node position description
 function getNodePosition(index) {
   const positions = [
     'top-left', 'top-center', 'top-right',
     'middle-left', 'middle-center', 'middle-right',
-    'bottom-left', 'bottom-center', 'bottom-right'
+    'bottom-left', 'bottom-center', 'bottom-right',
   ];
-  return positions[index];
+  return positions[index] || `node-${index}`;
 }
 
-// Activate a specific node
+function updateInstructions() {
+  const instructions = document.getElementById('calibrationInstructions');
+  const position = getNodePosition(currentNodeIndex);
+  instructions.innerHTML = `
+    <strong>Active Node:</strong> ${position.replace(/-/g, ' ')}
+    (${currentNodeIndex + 1}/${totalNodes})<br>
+    <small>Click the highlighted green node to continue</small>
+  `;
+}
+
 function activateNode(index) {
   const nodes = document.querySelectorAll('.node-target');
   nodes.forEach((node, i) => {
@@ -53,146 +37,146 @@ function activateNode(index) {
       node.classList.remove('active');
     }
   });
-  
+
   currentNodeIndex = index;
   updateInstructions();
 }
 
-// Update instruction text
-function updateInstructions() {
-  const instructions = document.getElementById('calibrationInstructions');
-  const position = getNodePosition(currentNodeIndex);
-  instructions.innerHTML = `
-    <strong>Active Node:</strong> ${position.replace(/-/g, ' ')} 
-    (${currentNodeIndex + 1}/${totalNodes})<br>
-    <small>Click the highlighted green node to continue</small>
-  `;
-}
+async function handleNodeClick(index, nodeElement) {
+  if (index !== currentNodeIndex || !sessionId) return;
 
-// Handle node click
-function handleNodeClick(index, nodeElement) {
-  if (index !== currentNodeIndex) return;
-  
-  // Mark as completed
   nodeElement.classList.remove('active');
   nodeElement.classList.add('completed');
-  
-  // Store calibration data
-  calibrationData.push({
-    index: index,
+
+  const event = {
+    index,
     position: getNodePosition(index),
-    timestamp: Date.now()
-  });
-  
-  // Move to next node or complete
+    timestamp: Date.now(),
+  };
+  calibrationData.push(event);
+
+  try {
+    await window.eyeApi.submitCalibrationNode({
+      session_id: sessionId,
+      node_index: index,
+      data: event,
+    });
+  } catch (err) {
+    console.error('Failed to submit calibration node:', err);
+  }
+
   if (currentNodeIndex < totalNodes - 1) {
     activateNode(currentNodeIndex + 1);
   } else {
-    completeCalibration();
+    await completeCalibration();
   }
 }
 
-// Complete calibration
-function completeCalibration() {
+function renderCalibrationNodes() {
+  const grid = document.getElementById('calibrationGrid');
+  grid.innerHTML = '';
+
+  for (let i = 0; i < totalNodes; i++) {
+    const nodeContainer = document.createElement('div');
+    nodeContainer.className = 'calibration-node';
+
+    const nodeTarget = document.createElement('div');
+    nodeTarget.className = 'node-target inactive';
+    nodeTarget.dataset.index = i;
+    nodeTarget.dataset.position = getNodePosition(i);
+    nodeTarget.addEventListener('click', () => {
+      handleNodeClick(i, nodeTarget);
+    });
+
+    nodeContainer.appendChild(nodeTarget);
+    grid.appendChild(nodeContainer);
+  }
+
+  activateNode(0);
+}
+
+async function completeCalibration() {
   const instructions = document.getElementById('calibrationInstructions');
   instructions.style.display = 'none';
-  
-  // Show all nodes as completed
+
   const nodes = document.querySelectorAll('.node-target');
-  nodes.forEach(node => {
+  nodes.forEach((node) => {
     node.classList.remove('active', 'inactive');
     node.classList.add('completed');
   });
-  
-  // Show completion modal
+
+  try {
+    await window.eyeApi.completeCalibrationSession({
+      session_id: sessionId,
+      calibration_data: calibrationData,
+      timestamp: Date.now(),
+    });
+  } catch (err) {
+    console.error('Failed to complete calibration session:', err);
+  }
+
   setTimeout(() => {
     const modal = document.getElementById('completionModal');
     modal.classList.add('active');
-  }, 500);
-  
-  // Save calibration data to backend
-  saveCalibrationData();
+  }, 350);
 }
 
-// Save calibration data
-async function saveCalibrationData() {
-  try {
-    const response = await fetch(`${API_BASE}/prefs/calibration`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        calibration_data: calibrationData,
-        timestamp: Date.now()
-      })
-    });
-    
-    const data = await response.json();
-    if (data.ok) {
-      console.log('Calibration saved successfully', data.data);
-    }
-  } catch (error) {
-    console.error('Failed to save calibration:', error);
-  }
-}
-
-// Track mouse for user cursor display
 function trackMouse(e) {
   const cursor = document.getElementById('userCursor');
-  if (cursor && document.getElementById('calibrationOverlay').classList.contains('active')) {
-    cursor.style.left = e.clientX + 'px';
-    cursor.style.top = e.clientY + 'px';
-    cursor.style.display = 'block';
-  }
+  if (!cursor) return;
+  if (!document.getElementById('calibrationOverlay').classList.contains('active')) return;
+
+  cursor.style.left = `${e.clientX}px`;
+  cursor.style.top = `${e.clientY}px`;
+  cursor.style.display = 'block';
 }
 
-// Enter fullscreen and start calibration
-document.getElementById('fullscreenBtn').addEventListener('click', () => {
+async function startCalibrationSession() {
+  const data = await window.eyeApi.startCalibrationSession({ total_nodes: 9 });
+  totalNodes = data.total_nodes || 9;
+  sessionId = data.session_id;
+  calibrationData = [];
+  currentNodeIndex = 0;
+  renderCalibrationNodes();
+}
+
+document.getElementById('fullscreenBtn').addEventListener('click', async () => {
   const overlay = document.getElementById('calibrationOverlay');
   overlay.classList.add('active');
-  
-  // Generate nodes
-  generateCalibrationNodes();
-  
-  // Try to enter fullscreen
-  if (document.documentElement.requestFullscreen) {
-    document.documentElement.requestFullscreen().catch(err => {
-      console.log('Fullscreen not supported:', err);
-    });
+
+  try {
+    await startCalibrationSession();
+  } catch (err) {
+    alert(`Failed to start calibration: ${err.message}`);
+    return;
   }
-  
-  // Track mouse
+
+  if (document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+
   document.addEventListener('mousemove', trackMouse);
 });
 
-// Exit fullscreen and go to settings
 document.getElementById('exitFullscreenBtn').addEventListener('click', () => {
-  // Exit fullscreen
   if (document.exitFullscreen) {
-    document.exitFullscreen().catch(err => console.log(err));
+    document.exitFullscreen().catch(() => {});
   }
-  
-  // Navigate to settings
   window.location.href = 'settings.html';
 });
 
-// Show device info
 document.getElementById('deviceInfoBtn').addEventListener('click', async () => {
   try {
-    const response = await fetch(`${API_BASE}/serial/status`);
-    const data = await response.json();
-    
-    if (data.ok) {
-      const status = data.data;
-      alert(
-        `Device Info:\n\n` +
-        `Status: ${status.connected ? 'Connected' : 'Disconnected'}\n` +
-        `Port: ${status.port || 'N/A'}\n` +
-        `Error: ${status.last_error || 'None'}`
-      );
-    }
-  } catch (error) {
-    alert('Device Info:\n\nStatus: Unable to fetch\nError: Backend not responding');
+    const status = await window.eyeApi.getRuntimeState();
+    alert(
+      `Device Info:\n\n` +
+      `Mode: ${status.mode}\n` +
+      `Connected: ${status.connected ? 'Yes' : 'No'}\n` +
+      `Active Source: ${status.active_source || 'N/A'}\n` +
+      `Serial Port: ${status.serial.port || 'N/A'}\n` +
+      `Last Error: ${status.last_error || 'None'}`
+    );
+  } catch (err) {
+    alert('Device Info:\n\nUnable to fetch runtime status');
   }
 });

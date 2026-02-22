@@ -1,3 +1,3 @@
-"""
-Service layer for app runtime managers.
-"""
+"""Service layer package."""
+
+__all__ = []

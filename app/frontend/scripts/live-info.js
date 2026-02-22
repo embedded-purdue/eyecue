@@ -1,9 +1,7 @@
 /**
- * live-info.js - Live Info View logic
- * Shows real-time connection status and monitoring for ESP32 camera device
+ * live-info.js - Runtime monitor view.
  */
 
-const API_BASE = 'http://127.0.0.1:5001';
 const terminal = document.getElementById('terminal');
 const statusElement = document.getElementById('connectionStatus');
 const statusDot = document.getElementById('statusDot');
@@ -13,242 +11,132 @@ const serialInfoElement = document.getElementById('serialInfo');
 const cameraInfoElement = document.getElementById('cameraInfo');
 
 let pollInterval = null;
-let lastStatus = null;
-let isDestroyed = false;
-let isInitialized = false;
+let lastSnapshot = null;
 
-// Add log entry to terminal (with memory management)
 function addLog(message, type = 'info') {
-  if (isDestroyed) return;
-  
   const line = document.createElement('div');
   line.className = 'terminal-line';
-  
-  const timestamp = new Date().toLocaleTimeString('en-US', { hour12: false });
-  const timestampSpan = document.createElement('span');
-  timestampSpan.className = 'terminal-timestamp';
-  timestampSpan.textContent = `[${timestamp}] `;
-  
-  const messageSpan = document.createElement('span');
-  messageSpan.className = `terminal-${type}`;
-  messageSpan.textContent = message;
-  
-  line.appendChild(timestampSpan);
-  line.appendChild(messageSpan);
+
+  const ts = document.createElement('span');
+  ts.className = 'terminal-timestamp';
+  ts.textContent = `[${new Date().toLocaleTimeString('en-US', { hour12: false })}] `;
+
+  const text = document.createElement('span');
+  text.className = `terminal-${type}`;
+  text.textContent = message;
+
+  line.appendChild(ts);
+  line.appendChild(text);
   terminal.appendChild(line);
-  
-  // Limit terminal lines to prevent memory issues
-  const maxLines = 100;
-  while (terminal.children.length > maxLines) {
+
+  while (terminal.children.length > 120) {
     terminal.removeChild(terminal.firstChild);
   }
-  
-  // Auto-scroll to bottom
   terminal.scrollTop = terminal.scrollHeight;
 }
 
-// Update connection status badge
-function updateStatus(status, message) {
-  if (isDestroyed) return;
-  
-  statusElement.className = `connection-status ${status}`;
-  statusDot.className = `status-dot ${status}`;
-  statusText.textContent = message || 'Unknown status';
+function updateStatus(state) {
+  let statusClass = 'disconnected';
+  let message = 'No Device Connected';
+
+  if (state.connected) {
+    statusClass = 'connected';
+    message = `Connected (${state.active_source || 'unknown source'})`;
+  }
+
+  statusElement.className = `connection-status ${statusClass}`;
+  statusDot.className = `status-dot ${statusClass}`;
+  statusText.textContent = message;
 }
 
-// Update info panel with real connection details
-function updateInfoPanel(data) {
-  if (isDestroyed) return;
-  
+function updatePanels(state) {
+  const serial = state.serial || {};
+  const wireless = state.wireless || {};
+  const cursor = state.cursor || {};
+  const serialAgent = (state.agent_stats || {}).serial || {};
+  const cursorAgent = (state.agent_stats || {}).cursor || {};
+
+  wifiInfoElement.innerHTML = `<strong>Wireless:</strong> ${wireless.connected ? 'Connected' : 'Disconnected'} | Device: ${wireless.device_id || 'N/A'} | Last Error: ${wireless.last_error || 'None'}`;
+  serialInfoElement.innerHTML = `<strong>Serial:</strong> ${serial.connected ? 'Connected' : 'Disconnected'} | Port: ${serial.port || 'N/A'} | Mode: ${state.mode} | Serial Hz: ${serialAgent.loop_hz || 0}`;
+
+  const lastSample = cursor.last_sample || {};
+  cameraInfoElement.innerHTML =
+    `<strong>Pipeline:</strong> Source: ${state.active_source || 'N/A'} | Sample Hz: ${cursor.sample_rate_hz || 0} | Queue Lag: ${cursor.queue_lag_ms || 'N/A'}ms | Last Sample: ${lastSample.x ?? 'N/A'}, ${lastSample.y ?? 'N/A'} | Cursor Agent Hz: ${cursorAgent.loop_hz || 0}`;
+}
+
+function logStateChanges(state) {
+  if (!lastSnapshot) {
+    addLog('Live monitor initialized', 'success');
+  } else {
+    if (lastSnapshot.connected !== state.connected) {
+      addLog(state.connected ? 'Runtime connected' : 'Runtime disconnected', state.connected ? 'success' : 'warning');
+    }
+    if (lastSnapshot.active_source !== state.active_source) {
+      addLog(`Active source changed: ${lastSnapshot.active_source || 'none'} -> ${state.active_source || 'none'}`, 'info');
+    }
+    if (lastSnapshot.last_error !== state.last_error && state.last_error) {
+      addLog(`Runtime error: ${state.last_error}`, 'error');
+    }
+  }
+
+  const events = state.events || [];
+  if (events.length) {
+    const latest = events[events.length - 1];
+    if (!lastSnapshot || latest.ts_ms !== ((lastSnapshot.events || []).slice(-1)[0] || {}).ts_ms) {
+      addLog(latest.message, 'warning');
+    }
+  }
+
+  lastSnapshot = state;
+}
+
+async function pollRuntime() {
   try {
-    // WiFi info
-    const wifiStatus = data.wifi_connected ? 'Connected' : 'Not Connected';
-    const wifiSSID = data.wifi_ssid || 'N/A';
-    const wifiIP = data.wifi_ip || 'N/A';
-    wifiInfoElement.innerHTML = `<strong>WiFi:</strong> ${wifiStatus}${data.wifi_connected ? ` | SSID: ${wifiSSID} | IP: ${wifiIP}` : ''}`;
-    
-    // Serial info
-    const serialStatus = data.connected ? 'Connected' : 'Disconnected';
-    const serialPort = data.port || 'N/A';
-    const baudRate = data.baud_rate || 115200;
-    serialInfoElement.innerHTML = `<strong>Serial:</strong> ${serialStatus}${data.connected ? ` | Port: ${serialPort} | Baud: ${baudRate}` : ''}`;
-    
-    // Camera info (if available from device)
-    const cameraStatus = data.camera_ready ? 'Ready' : 'Not Available';
-    const frameSize = data.frame_size || 'QVGA';
-    const quality = data.jpeg_quality || 'Unknown';
-    cameraInfoElement.innerHTML = `<strong>Camera:</strong> ${cameraStatus}${data.camera_ready ? ` | Size: ${frameSize} | Quality: ${quality}` : ''}`;
-  } catch (error) {
-    console.error('Error updating info panel:', error);
+    const state = await window.eyeApi.getRuntimeState();
+    updateStatus(state);
+    updatePanels(state);
+    logStateChanges(state);
+  } catch (err) {
+    statusElement.className = 'connection-status error';
+    statusDot.className = 'status-dot error';
+    statusText.textContent = 'Backend Connection Error';
+    addLog(`Failed to fetch runtime state: ${err.message}`, 'error');
   }
 }
 
-// Check backend and device status
-async function checkConnectionStatus() {
-  if (isDestroyed) return;
-  
-  try {
-    // Check if backend is reachable
-    const response = await fetch(`${API_BASE}/serial/status`, {
-      signal: AbortSignal.timeout(3000) // 3 second timeout
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    if (data.ok) {
-      const status = data.data;
-      
-      // Determine overall connection state
-      if (status.connected) {
-        // ESP32 is connected via serial
-        updateStatus('connected', 'ESP32 Connected via Serial');
-        updateInfoPanel(status);
-        
-        // Log only state changes
-        if (lastStatus !== 'connected') {
-          addLog(`ESP32 device connected on ${status.port}`, 'success');
-          if (status.wifi_connected) {
-            addLog(`WiFi connected: ${status.wifi_ssid} (${status.wifi_ip})`, 'success');
-          }
-          addLog('Camera server ready for streaming', 'info');
-        }
-        
-        lastStatus = 'connected';
-      } else {
-        // No serial connection
-        updateStatus('disconnected', 'No Device Connected');
-        updateInfoPanel(status);
-        
-        if (lastStatus !== 'disconnected') {
-          addLog('No ESP32 device detected', 'warning');
-          addLog('Waiting for device connection...', 'info');
-          if (status.last_error) {
-            addLog(`Last error: ${status.last_error}`, 'error');
-          }
-        }
-        
-        lastStatus = 'disconnected';
-      }
-    }
-  } catch (error) {
-    if (isDestroyed) return;
-    
-    updateStatus('error', 'Backend Connection Error');
-    wifiInfoElement.innerHTML = '<strong>WiFi:</strong> Unable to fetch';
-    serialInfoElement.innerHTML = '<strong>Serial:</strong> Unable to fetch';
-    cameraInfoElement.innerHTML = '<strong>Camera:</strong> Unable to fetch';
-    
-    if (lastStatus !== 'error') {
-      addLog('Cannot connect to backend server', 'error');
-      addLog(`Error: ${error.message}`, 'error');
-      addLog('Make sure run_server.py is running on port 5001', 'warning');
-    }
-    
-    lastStatus = 'error';
-  }
-}
-
-// Start polling for status updates
 function startPolling() {
-  addLog('Live monitoring started', 'success');
-  addLog('Polling device status every 2 seconds...', 'info');
-  
-  // Initial check
-  checkConnectionStatus();
-  
-  // Poll every 2 seconds
-  pollInterval = setInterval(checkConnectionStatus, 2000);
+  pollRuntime();
+  pollInterval = setInterval(pollRuntime, 1000);
 }
 
-// Stop polling and cleanup
 function stopPolling() {
   if (pollInterval) {
     clearInterval(pollInterval);
     pollInterval = null;
   }
-  isDestroyed = true;
 }
 
-// Main initialization
-function initialize() {
-  // Prevent duplicate initialization
-  if (isInitialized) {
-    console.warn('Live Info View already initialized');
-    return;
+document.getElementById('backBtn').addEventListener('click', () => {
+  stopPolling();
+  window.location.href = 'settings.html';
+});
+
+document.getElementById('deviceInfoBtn').addEventListener('click', async () => {
+  try {
+    const state = await window.eyeApi.getRuntimeState();
+    alert(
+      `Device Info:\n\n` +
+      `Mode: ${state.mode}\n` +
+      `Connected: ${state.connected ? 'Yes' : 'No'}\n` +
+      `Active Source: ${state.active_source || 'N/A'}\n` +
+      `Sample Rate: ${state.cursor.sample_rate_hz || 0} Hz\n` +
+      `Queue Lag: ${state.cursor.queue_lag_ms || 'N/A'} ms\n` +
+      `Last Error: ${state.last_error || 'None'}`
+    );
+  } catch (err) {
+    alert('Unable to fetch device info');
   }
-  isInitialized = true;
-  
-  addLog('EyeCue Live Info View initialized', 'info');
-  addLog('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'info');
-  addLog('ESP32 Camera Server Connection Monitor', 'info');
-  addLog('This page shows real-time connection status', 'info');
-  addLog('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', 'info');
-  
-  updateStatus('searching', 'Checking backend connection...');
-  
-  // Start status polling
-  startPolling();
-}
+});
 
-// Back button (attach only once)
-const backBtn = document.getElementById('backBtn');
-if (backBtn && !backBtn.dataset.listenerAttached) {
-  backBtn.dataset.listenerAttached = 'true';
-  backBtn.addEventListener('click', (e) => {
-    e.preventDefault();
-    stopPolling();
-    window.location.href = 'settings.html';
-  });
-}
-
-// Device Info modal (attach only once)
-const deviceInfoBtn = document.getElementById('deviceInfoBtn');
-if (deviceInfoBtn && !deviceInfoBtn.dataset.listenerAttached) {
-  deviceInfoBtn.dataset.listenerAttached = 'true';
-  deviceInfoBtn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    
-    try {
-      const response = await fetch(`${API_BASE}/serial/status`, {
-        signal: AbortSignal.timeout(3000)
-      });
-      const data = await response.json();
-      
-      if (data.ok) {
-        const status = data.data;
-        const connectionMode = localStorage.getItem('connectionMode') || 'wifi';
-        
-        alert(
-          `Device Info:\n\n` +
-          `Connection Mode: ${connectionMode.toUpperCase()}\n` +
-          `Serial Status: ${status.connected ? 'Connected' : 'Disconnected'}\n` +
-          `Port: ${status.port || 'N/A'}\n` +
-          `Baud Rate: ${status.baud_rate || 'N/A'}\n` +
-          `WiFi: ${status.wifi_connected ? 'Connected' : 'N/A'}\n` +
-          `SSID: ${status.wifi_ssid || 'N/A'}\n` +
-          `IP: ${status.wifi_ip || 'N/A'}\n` +
-          `Camera: ${status.camera_ready ? 'Ready' : 'N/A'}\n` +
-          `Last Error: ${status.last_error || 'None'}`
-        );
-      }
-    } catch (error) {
-      console.error('Device info fetch error:', error);
-      alert(
-        `Device Info:\n\n` +
-        `Unable to fetch device information.\n` +
-        `Make sure backend is running on port 5001.`
-      );
-    }
-  });
-}
-
-// Cleanup on page unload
 window.addEventListener('beforeunload', stopPolling);
-
-// Initialize on page load
-initialize();
+startPolling();

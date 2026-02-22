@@ -1,131 +1,71 @@
 /**
- * advanced-settings.js - Advanced Settings page logic
+ * advanced-settings.js - Advanced preferences page backed by Flask.
  */
 
-const API_BASE = 'http://127.0.0.1:5001';
+let prefsState = null;
 
-// Load advanced settings from backend or localStorage
-async function loadAdvancedSettings() {
-  try {
-    const response = await fetch(`${API_BASE}/prefs`);
-    const data = await response.json();
-    
-    if (data.ok && data.data) {
-      const prefs = data.data;
-      const settings = {
-        preference1: prefs.preference_1 || localStorage.getItem('preference1') || 'default',
-        preference2: prefs.preference_2 || localStorage.getItem('preference2') || 'default',
-        horizontalSensitivity: prefs.horizontal_sensitivity || parseInt(localStorage.getItem('horizontalSensitivity')) || 50,
-        verticalSensitivity: prefs.vertical_sensitivity || parseInt(localStorage.getItem('verticalSensitivity')) || 50
-      };
-      
-      applySettings(settings);
-      return settings;
-    }
-  } catch (error) {
-    console.error('Failed to load settings from backend:', error);
-  }
-  
-  // Fallback to localStorage
-  const settings = {
-    preference1: localStorage.getItem('preference1') || 'default',
-    preference2: localStorage.getItem('preference2') || 'default',
-    horizontalSensitivity: parseInt(localStorage.getItem('horizontalSensitivity')) || 50,
-    verticalSensitivity: parseInt(localStorage.getItem('verticalSensitivity')) || 50
-  };
-  
-  applySettings(settings);
-  return settings;
+function applySettings(prefs) {
+  document.getElementById('preference1').value = prefs.preference_1 || 'default';
+  document.getElementById('preference2').value = prefs.preference_2 || 'default';
+
+  const horizontal = Number(prefs.horizontal_sensitivity || 50);
+  const vertical = Number(prefs.vertical_sensitivity || 50);
+
+  document.getElementById('horizontalSensitivity').value = horizontal;
+  document.getElementById('verticalSensitivity').value = vertical;
+  document.getElementById('horizontalValue').textContent = String(horizontal);
+  document.getElementById('verticalValue').textContent = String(vertical);
 }
 
-// Apply settings to UI
-function applySettings(settings) {
-  // Apply preference values
-  document.getElementById('preference1').value = settings.preference1;
-  document.getElementById('preference2').value = settings.preference2;
-  
-  // Apply sensitivity values
-  document.getElementById('horizontalSensitivity').value = settings.horizontalSensitivity;
-  document.getElementById('verticalSensitivity').value = settings.verticalSensitivity;
-  document.getElementById('horizontalValue').textContent = settings.horizontalSensitivity;
-  document.getElementById('verticalValue').textContent = settings.verticalSensitivity;
+async function refresh() {
+  prefsState = await window.eyeApi.getPrefs();
+  applySettings(prefsState);
 }
 
-// Save settings to backend and localStorage
 async function saveSettings() {
-  const preference1 = document.getElementById('preference1').value;
-  const preference2 = document.getElementById('preference2').value;
-  const horizontalSensitivity = parseInt(document.getElementById('horizontalSensitivity').value);
-  const verticalSensitivity = parseInt(document.getElementById('verticalSensitivity').value);
-  
-  // Save to localStorage
-  localStorage.setItem('preference1', preference1);
-  localStorage.setItem('preference2', preference2);
-  localStorage.setItem('horizontalSensitivity', horizontalSensitivity);
-  localStorage.setItem('verticalSensitivity', verticalSensitivity);
-  
-  // Save to backend
-  try {
-    await fetch(`${API_BASE}/prefs`, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        preference_1: preference1,
-        preference_2: preference2,
-        horizontal_sensitivity: horizontalSensitivity,
-        vertical_sensitivity: verticalSensitivity
-      })
-    });
-  } catch (error) {
-    console.error('Failed to save settings to backend:', error);
-  }
+  if (!prefsState) return;
+
+  prefsState = await window.eyeApi.updatePrefs({
+    preference_1: document.getElementById('preference1').value,
+    preference_2: document.getElementById('preference2').value,
+    horizontal_sensitivity: Number(document.getElementById('horizontalSensitivity').value),
+    vertical_sensitivity: Number(document.getElementById('verticalSensitivity').value),
+  });
 }
 
-// Preference dropdowns
 document.getElementById('preference1').addEventListener('change', saveSettings);
 document.getElementById('preference2').addEventListener('change', saveSettings);
 
-// Horizontal sensitivity slider
-document.getElementById('horizontalSensitivity').addEventListener('input', function() {
+document.getElementById('horizontalSensitivity').addEventListener('input', function onHorizontalInput() {
   document.getElementById('horizontalValue').textContent = this.value;
   saveSettings();
 });
 
-// Vertical sensitivity slider
-document.getElementById('verticalSensitivity').addEventListener('input', function() {
+document.getElementById('verticalSensitivity').addEventListener('input', function onVerticalInput() {
   document.getElementById('verticalValue').textContent = this.value;
   saveSettings();
 });
 
-// Back button
 document.getElementById('backBtn').addEventListener('click', () => {
   window.location.href = 'settings.html';
 });
 
-// Device Info button
 document.getElementById('deviceInfoBtn').addEventListener('click', async () => {
   try {
-    const response = await fetch(`${API_BASE}/serial/status`);
-    const data = await response.json();
-    
-    if (data.ok) {
-      const status = data.data;
-      const connectionMode = localStorage.getItem('connectionMode') || 'wifi';
-      
-      alert(
-        `Device Info:\n\n` +
-        `Connection: ${connectionMode.toUpperCase()}\n` +
-        `Status: ${status.connected ? 'Connected' : 'Disconnected'}\n` +
-        `Port: ${status.port || 'N/A'}\n` +
-        `Error: ${status.last_error || 'None'}`
-      );
-    }
-  } catch (error) {
-    alert('Device Info:\n\nUnable to fetch device information');
+    const status = await window.eyeApi.getRuntimeState();
+    alert(
+      `Device Info:\n\n` +
+      `Mode: ${status.mode}\n` +
+      `Connected: ${status.connected ? 'Yes' : 'No'}\n` +
+      `Active Source: ${status.active_source || 'N/A'}\n` +
+      `Serial Port: ${status.serial.port || 'N/A'}\n` +
+      `Last Error: ${status.last_error || 'None'}`
+    );
+  } catch (err) {
+    alert('Device Info:\n\nUnable to fetch runtime status');
   }
 });
 
-// Load settings on page load
-loadAdvancedSettings();
+refresh().catch((err) => {
+  console.error('Failed to load advanced settings:', err);
+});

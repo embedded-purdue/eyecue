@@ -1,38 +1,48 @@
-from flask import Blueprint, request, jsonify
-import sys
-import os
+from __future__ import annotations
 
-# Add parent directory to path to import CursorController
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-from CursorController import CursorController
+from flask import Blueprint, jsonify, request
 
-cursor_bp = Blueprint('cursor', __name__, url_prefix='/cursor')
+from app.config import CURSOR_ENABLED
+from app.services.runtime_context import runtime_store
 
-
-def _cursor_enabled() -> bool:
-    return os.getenv("EYE_ENABLE_CURSOR", "").lower() in {"1", "true", "yes", "on"}
+try:
+    import pyautogui
+except Exception:  # pragma: no cover - optional runtime dependency
+    pyautogui = None
 
 
-@cursor_bp.route('/update', methods=["POST"])
-def update():
-    payload = request.get_json(silent=True) or {}
-    x = payload.get("x")
-    y = payload.get("y")
-    mode = payload.get("mode", "abs")
+cursor_bp = Blueprint("cursor", __name__, url_prefix="/cursor")
 
-    if x is None or y is None:
+
+@cursor_bp.route("/update", methods=["POST"])
+def update() -> tuple:
+    body = request.get_json(silent=True) or {}
+    if "x" not in body or "y" not in body:
         return jsonify({"ok": False, "error": "x and y are required"}), 400
 
     try:
-        x_val = float(x)
-        y_val = float(y)
-    except (TypeError, ValueError):
-        return jsonify({"ok": False, "error": "x and y must be numbers"}), 400
+        sample = runtime_store.ingest_cursor_sample(
+            {
+                "x": body.get("x"),
+                "y": body.get("y"),
+                "mode": body.get("mode", "abs"),
+                "source": body.get("source", "api"),
+                "ts_ms": body.get("ts_ms"),
+                "confidence": body.get("confidence"),
+                "raw": body,
+            },
+            default_source="api",
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
-    if _cursor_enabled():
+    mode = body.get("mode", "abs")
+    if CURSOR_ENABLED and pyautogui is not None:
+        x = float(sample["x"])
+        y = float(sample["y"])
         if mode == "rel":
-            pyautogui.moveRel(x_val, y_val)
+            pyautogui.moveRel(x, y)
         else:
-            pyautogui.moveTo(x_val, y_val)
+            pyautogui.moveTo(x, y)
 
-    return jsonify({"ok": True}), 200
+    return jsonify({"ok": True, "data": sample}), 200

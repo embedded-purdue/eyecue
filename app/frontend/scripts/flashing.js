@@ -1,58 +1,54 @@
 /**
- * flashing.js - Progress screen logic
+ * flashing.js - Starts runtime and transitions to next screen.
  */
 
-const API_BASE = 'http://127.0.0.1:5001';
-
-// Get credentials from URL parameters
 const urlParams = new URLSearchParams(window.location.search);
-const ssid = urlParams.get('ssid');
-const port = urlParams.get('port');
-const password = sessionStorage.getItem('wifi_password');
 
-async function connectToDevice() {
+function updateText(message) {
+  const el = document.querySelector('.progress-text');
+  if (el) el.textContent = message;
+}
+
+async function startRuntime() {
+  const mode = (urlParams.get('mode') || 'serial').toLowerCase();
+  const ssid = urlParams.get('ssid') || '';
+  const port = urlParams.get('port') || '';
+  const password = sessionStorage.getItem('eye_pending_password') || '';
+
+  if (!port) {
+    updateText('Missing serial port. Returning to connection menu...');
+    setTimeout(() => {
+      window.location.href = 'connect.html';
+    }, 1500);
+    return;
+  }
+
   try {
-    const response = await fetch(`${API_BASE}/serial/connect`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        port: port,
-        ssid: ssid,
-        password: password || '',
-        baud: 115200
-      })
+    updateText('Starting runtime agents...');
+
+    await window.eyeApi.startRuntime({
+      mode,
+      ssid,
+      password,
+      port,
+      baud: 115200,
     });
 
-    const data = await response.json();
-    
-    if (data.ok) {
-      // Success! Navigate to calibration after a short delay
-      setTimeout(() => {
-        window.location.href = 'calibration.html';
-      }, 1500);
-    } else {
-      // Connection failed
-      alert('Connection failed: ' + (data.error || 'Unknown error'));
-      window.location.href = 'connect.html';
+    const bootstrap = await window.eyeApi.bootstrap();
+    sessionStorage.removeItem('eye_pending_password');
+
+    if (bootstrap.has_onboarded) {
+      window.location.href = 'settings.html';
+      return;
     }
-  } catch (error) {
-    console.error('Connection error:', error);
-    // Still proceed to calibration even if backend fails (for demo purposes)
+
+    window.location.href = 'calibration.html';
+  } catch (err) {
+    updateText(`Connection failed: ${err.message}`);
     setTimeout(() => {
-      window.location.href = 'calibration.html';
-    }, 3500);
+      window.location.href = 'connect.html';
+    }, 1800);
   }
 }
 
-// Store password from previous page (if passed via form)
-if (ssid && port) {
-  // Start connection process
-  connectToDevice();
-} else {
-  // Auto-navigate after animation completes
-  setTimeout(() => {
-    window.location.href = 'calibration.html';
-  }, 3500);
-}
+startRuntime();

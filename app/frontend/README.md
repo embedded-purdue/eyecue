@@ -1,57 +1,38 @@
 # EyeCue Electron Frontend
 
-An Electron app that provides the setup and calibration sequence for the EyeCue eye-tracking cursor device.
+Electron renderer for the EyeCue setup/calibration/settings flow.
 
-## Device Setup Sequence
+## Runtime model
 
-1. **Welcome Screen** - Initial welcome with device connection prompt
-2. **Connection Form** - WiFi credentials and serial port selection
-3. **Flashing Progress** - Network information being sent to device
-4. **Calibration** - First-time calibration setup with fullscreen option
+- Electron main process starts Flask (`python3 -m app.app`) on launch.
+- Frontend pages call Flask JSON APIs at `http://127.0.0.1:5001`.
+- Backend owns runtime state, agent lifecycle, calibration session state, and preferences.
 
-## Installation
+## Main pages
+
+1. `welcome.html` - startup bootstrap routing
+2. `connect.html` - serial/wired connection menu
+3. `flashing.html` - runtime start transition
+4. `calibration.html` - backend-backed calibration session
+5. `settings.html` - primary settings menu
+6. `advanced-settings.html` - advanced preferences
+7. `live-info.html` - runtime monitor
+
+## Scripts
+
+- `scripts/api-client.js` shared API wrapper for all pages
+- page-level scripts call `window.eyeApi.*` methods only
+
+## Run
 
 ```bash
 cd app/frontend
 npm install
-```
-
-## Running the App
-
-```bash
 npm start
 ```
 
-For development with DevTools:
+Use debug mode:
+
 ```bash
 npm run dev
 ```
-
-## Project Structure
-
-```
-app/frontend/
-├── main.js              # Electron main process
-├── preload.js           # Preload script (security bridge)
-├── package.json         # Dependencies and scripts
-├── pages/              
-│   ├── welcome.html     # Welcome screen
-│   ├── connect.html     # Connection form
-│   ├── flashing.html    # Progress indicator
-│   └── calibration.html # Calibration setup
-├── scripts/            
-│   ├── welcome.js       # Welcome screen logic
-│   ├── connect.js       # Form submission logic
-│   ├── flashing.js      # Progress logic
-│   └── calibration.js   # Calibration logic
-└── styles/
-    └── main.css         # Application styles
-```
-
-## Next Steps
-
-- Integrate with Flask backend (`/serial/connect` and `/serial/status` endpoints)
-- Add serial port auto-detection
-- Implement actual calibration routine
-- Add error handling and validation
-- Create device info modal

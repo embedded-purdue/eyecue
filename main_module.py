@@ -71,11 +71,10 @@ def main():
                 # Logic to print or trigger scroll based on pupil position
                 h, w, _ = frame.shape
                 active_zone, last_scroll, enter_t = autoscroll(
-                    height=h, 
-                    current_y=pupil_y, 
-                    enter_t=enter_t, 
-                    last_scroll=last_scroll, 
-                    active_zone=active_zone
+                angle_v=angle_v,
+                enter_t=enter_t,
+                last_scroll=last_scroll,
+                active_zone=active_zone
                 )
 
             # 5. Handle Blink Detection (Clicking)

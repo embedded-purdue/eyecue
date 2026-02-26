@@ -36,7 +36,41 @@ A sensible default is supplied automatically from `zoom_factor`.
 """
 
 import math
+from collections import deque
 import numpy as np
+
+
+def filter_by_agreement(intersections, distance_threshold, min_agreements):
+    """
+    Return a boolean mask of points that have at least `min_agreements`
+    neighbors within `distance_threshold` (L2 norm).
+
+    Used to reject outlier eye-centre estimates produced by bad pupil
+    detections before they corrupt the running EMA.
+
+    Parameters
+    ----------
+    intersections      : (N, 3) array-like of 3-D points
+    distance_threshold : float  – max distance to count as "agreeing" (mm)
+    min_agreements     : int    – minimum nearby neighbors required to keep a point
+
+    Returns
+    -------
+    mask : (N,) bool ndarray – True for points that pass the filter
+    """
+    pts = np.asarray(intersections, dtype=float)
+    n = len(pts)
+    if n < 2:
+        return np.ones(n, dtype=bool)
+
+    mask = np.zeros(n, dtype=bool)
+    for i in range(n):
+        dists = np.linalg.norm(pts - pts[i], axis=1)
+        # exclude self (dist == 0), count remaining within threshold
+        agreements = int(np.sum(dists < distance_threshold)) - 1
+        mask[i] = agreements >= min_agreements
+
+    return mask
 
 
 class EyeballModel:
@@ -69,6 +103,14 @@ class EyeballModel:
         EMA alpha used after `n_fast_frames` frames (stable tracking).
     n_fast_frames : int
         Number of frames to use the faster initial smoothing.
+    agreement_threshold_mm : float
+        Two eye-centre candidates "agree" if they are within this distance
+        (mm) of each other.  Lower = stricter outlier rejection.
+    min_agreements : int
+        A candidate must have at least this many agreeing neighbors in the
+        recent buffer to be accepted.  Increase to be stricter.
+    agreement_buffer_size : int
+        How many recent eye-centre candidates to keep for comparison.
     """
 
     def __init__(
@@ -83,6 +125,9 @@ class EyeballModel:
         smoothing_init: float = 0.15,
         smoothing_steady: float = 0.03,
         n_fast_frames: int = 40,
+        agreement_threshold_mm: float = 5.0,
+        min_agreements: int = 3,
+        agreement_buffer_size: int = 15,
     ):
         self.R = eye_radius_mm
         self.init_depth = init_depth_mm
@@ -112,6 +157,13 @@ class EyeballModel:
         self._last_updated_center: tuple = None
 
         self.n_updates = 0
+
+        # Outlier filter – rolling buffer of recent c_new candidates.
+        # The agreement filter is only active after the warm-up period so the
+        # model can still initialise quickly even with sparse early data.
+        self.agreement_threshold_mm = agreement_threshold_mm
+        self.min_agreements = min_agreements
+        self._candidate_buffer: deque = deque(maxlen=agreement_buffer_size)
 
 
     def _pixel_to_ray(self, u: float, v: float) -> np.ndarray:
@@ -161,13 +213,36 @@ class EyeballModel:
         # 3-D pupil position on the near side of the eye sphere
         P = t * d
 
-        # Derive the centre update that places P exactly on the sphere:
-        #   C_new = P + R · normalize(C_old – P)
+        # Derive the centre candidate that places P exactly on the sphere:
+        #   c_new = P + R · normalize(C_old – P)
         offset = self.center - P
         off_len = float(np.linalg.norm(offset))
         if off_len < 1e-9:
             return
         c_new = P + self.R * (offset / off_len)
+
+        # ------------------------------------------------------------------
+        # Outlier rejection via agreement filter
+        # Only active after the warm-up period AND once the buffer has enough
+        # entries.  During warm-up all candidates are accepted so the model
+        # can converge quickly from a cold start.
+    
+        # ------------------------------------------------------------------
+        if (
+            self.n_updates >= self.n_fast_frames
+            and len(self._candidate_buffer) >= self.min_agreements
+        ):
+            pts = np.array(self._candidate_buffer)          # (N, 3)
+            dists = np.linalg.norm(pts - c_new, axis=1)    # distance to each buffered candidate
+            agreements = int(np.sum(dists < self.agreement_threshold_mm))
+            if agreements < self.min_agreements:
+                # Candidate is an outlier – add to buffer so future frames
+                # can use it as context, but skip the EMA update.
+                self._candidate_buffer.append(c_new.copy())
+                return
+
+        # Candidate passed – add to buffer and update the running estimate
+        self._candidate_buffer.append(c_new.copy())
 
         # Exponential moving average – faster during warm-up
         alpha = (
@@ -255,10 +330,11 @@ class EyeballModel:
 
 
     def reset(self) -> None:
-        """Reset the eyeball-centre estimate to the initial position."""
+        """Reset the eyeball-centre estimate and all buffers to initial state."""
         self.center = np.array([0.0, 0.0, float(self.init_depth)])
         self._last_updated_center = None
         self.n_updates = 0
+        self._candidate_buffer.clear()
 
     def __repr__(self) -> str:
         return (

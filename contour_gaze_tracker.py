@@ -14,6 +14,7 @@ from io import BytesIO
 from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
 from eyeball_model import EyeballModel
+from old_gaze_model import OldGazeModel
 
 class ESP32CameraCapture:
     """helper class to capture frames from esp32 camera"""
@@ -89,7 +90,7 @@ class ESP32CameraCapture:
             self.cap = None
 
 class ContourGazeTracker:
-    def __init__(self, output_video=None, enable_metrics=True, metrics_save_interval=100):
+    def __init__(self, output_video=None, enable_metrics=True, metrics_save_interval=100, gaze_model='sphere'):
         self.frame_count = 0
         self.esp32_capture = None
         self.is_local_camera = False
@@ -102,9 +103,11 @@ class ContourGazeTracker:
         # metrics collection
         self.enable_metrics = enable_metrics
         self.metrics = MetricsCollector(save_interval=metrics_save_interval) if enable_metrics else None
-        # eyeball sphere model – lazy-initialised on first frame so we know frame dimensions
-        self.eyeball_model = None
+        # gaze model selection: 'sphere' (new EyeballModel) or 'old' (linear ROI mapping)
+        self.gaze_model_type = gaze_model
+        self.eyeball_model = None  # lazy-initialised on first frame
         print("contour gaze tracker - press 'q' to quit")
+        print(f"[info] gaze model: {gaze_model}")
         print("output: 3d gaze vectors and angles every 30 frames")
         if output_video:
             print(f"[info] recording video to: {output_video}")
@@ -114,31 +117,29 @@ class ContourGazeTracker:
 
     def extract_gaze_numbers(self, pupil_center, frame_shape):
         """
-        Extract 3-D gaze vectors and angles using a sphere-based eyeball model.
+        Extract 3-D gaze vectors and angles.
 
-        Replaces the old linear pixel-offset approach with a proper pinhole
-        camera ray → sphere intersection.
+        Supports two models:
+          • 'sphere' – EyeballModel (pinhole camera + adaptive eye center)
+          • 'old'    – OldGazeModel (linear ROI offset from main branch)
 
-        The eyeball rotation centre is estimated adaptively each frame by
-        intersecting the camera ray with the eye sphere (radius 12 mm) and
-        nudging the center estimate with an exponential moving average.
-
-        Returns the same dict keys as before so all callers work unchanged.
-        Also includes 'eye_center_3d' and 'tilt_deg' for debugging.
+        Returns the same dict keys for both models.
         """
         if pupil_center is None:
             return None
 
-        # Lazy-init: we need the frame dimensions to set up the camera model
+        # Lazy-init: we need the frame dimensions to set up the model
         h, w = frame_shape[:2]
         if self.eyeball_model is None:
-            self.eyeball_model = EyeballModel(frame_w=w, frame_h=h)
-            print(f"[info] eyeball model initialised: f={self.eyeball_model.f:.0f}px, "
-                  f"depth={self.eyeball_model.init_depth}mm")
+            if self.gaze_model_type == 'old':
+                self.eyeball_model = OldGazeModel(frame_w=w, frame_h=h)
+                print(f"[info] old gaze model initialised: ROI center=({self.eyeball_model.roi_center_x}, {self.eyeball_model.roi_center_y})")
+            else:  # 'sphere' (default)
+                self.eyeball_model = EyeballModel(frame_w=w, frame_h=h)
+                print(f"[info] eyeball model initialised: f={self.eyeball_model.f:.0f}px, "
+                      f"depth={self.eyeball_model.init_depth}mm")
 
-        # Update the running eyeball-center estimate with this observation.
-        # EyeballModel.update() is identical for the same (x,y) so duplicate
-        # calls within one frame (metrics + display) do not double-update.
+        # Update the running estimate (no-op for OldGazeModel)
         self.eyeball_model.update(pupil_center)
 
         return self.eyeball_model.get_gaze_data(pupil_center)
@@ -350,7 +351,7 @@ class ContourGazeTracker:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='contour gaze tracker')
-    parser.add_argument('--camera', type=str, default='0', 
+    parser.add_argument('--camera', type=str, default='0',
                        help='camera index (int), video file path (str), or ESP32 stream URL (e.g., http://192.168.4.49/stream)')
     parser.add_argument('--output', type=str, default=None,
                        help='output video file path (e.g., output.mp4)')
@@ -358,18 +359,21 @@ def main():
                        help='disable metrics collection')
     parser.add_argument('--metrics-interval', type=int, default=100,
                        help='interval for auto-saving metrics (frames)')
+    parser.add_argument('--model', type=str, default='sphere', choices=['sphere', 'old'],
+                       help='gaze model: "sphere" (new adaptive) or "old" (linear ROI) (default: sphere)')
     args = parser.parse_args()
-    
+
     # convert to int if it's a number, otherwise keep as string (video file path or url)
     try:
         camera_input = int(args.camera)
     except ValueError:
         camera_input = args.camera
-    
+
     tracker = ContourGazeTracker(
         output_video=args.output,
         enable_metrics=not args.no_metrics,
-        metrics_save_interval=args.metrics_interval
+        metrics_save_interval=args.metrics_interval,
+        gaze_model=args.model
     )
     tracker.run(camera_index=camera_input)
 

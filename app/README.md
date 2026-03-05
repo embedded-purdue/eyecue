@@ -1,0 +1,61 @@
+# EyeCue Flask Backend (Minimal Prototype)
+
+## Overview
+
+This backend implements one prototype pipeline:
+
+`Network credentials -> ESP32 serial provisioning -> MJPEG stream -> CV processing -> optional cursor control`
+
+## Start
+
+```bash
+python3 -m app.app
+```
+
+Server default:
+
+- Host: `127.0.0.1`
+- Port: `5051`
+
+Health check:
+
+```bash
+curl http://127.0.0.1:5051/health
+```
+
+## API
+
+### Bootstrap and Serial
+
+- `GET /app/bootstrap`
+- `GET /serial/ports`
+
+### Runtime
+
+- `POST /runtime/connect`
+  - JSON: `ssid`, `password`, `serial_port`, optional `baud`
+- `GET /runtime/state`
+- `POST /runtime/tracking`
+  - JSON: `enabled` (boolean)
+- `POST /runtime/stop`
+
+## Runtime State Shape
+
+`/runtime/state` returns:
+
+- `phase`
+- `ssid`
+- `serial_port`
+- `esp32_ip`
+- `stream_url`
+- `tracking_enabled`
+- `frames_processed`
+- `last_frame_ts_ms`
+- `last_error`
+- `alerts` (`[{id, ts_ms, level, message}]`)
+
+## Notes
+
+- MJPEG path attempts start with `http://<esp32_ip>/stream`.
+- Additional fallback paths can be configured via `EYE_MJPEG_PATHS`.
+- Tracking toggle is session-only and defaults to disabled at app launch.

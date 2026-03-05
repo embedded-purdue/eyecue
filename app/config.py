@@ -1,30 +1,23 @@
-"""Application configuration for EyeCue desktop runtime."""
+"""Minimal application configuration for EyeCue desktop runtime."""
 
 from __future__ import annotations
 
+from pathlib import Path
+from dotenv import load_dotenv
 import os
 
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 FLASK_HOST = os.getenv("EYE_FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.getenv("EYE_FLASK_PORT", "5051"))
+BYPASS_SERIAL = os.getenv("BYPASS_SERIAL", "false").lower() == "true"
 
-INTERNAL_BASE_URL = os.getenv("EYE_INTERNAL_BASE_URL", f"http://{FLASK_HOST}:{FLASK_PORT}")
+SERIAL_ACK_TIMEOUT_S = float(os.getenv("EYE_SERIAL_ACK_TIMEOUT_S", "20.0"))
+STREAM_RETRY_DELAY_S = float(os.getenv("EYE_STREAM_RETRY_DELAY_S", "2.0"))
 
-CURSOR_RATE_HZ = float(os.getenv("EYE_CURSOR_RATE_HZ", "30"))
-SOURCE_STALE_MS = int(os.getenv("EYE_SOURCE_STALE_MS", "2000"))
-AGENT_STATS_INTERVAL_S = float(os.getenv("EYE_AGENT_STATS_INTERVAL_S", "1.0"))
-HTTP_TIMEOUT_S = float(os.getenv("EYE_AGENT_HTTP_TIMEOUT_S", "0.5"))
-WIRELESS_VIDEO_BUFFER_MAX = int(os.getenv("EYE_WIRELESS_VIDEO_BUFFER_MAX", "120"))
-WIRELESS_VIDEO_MAX_FRAME_BYTES = int(os.getenv("EYE_WIRELESS_VIDEO_MAX_FRAME_BYTES", str(2 * 1024 * 1024)))
-
-ALLOWED_RUNTIME_MODES = {"serial", "wired", "wifi"}
-
-
-def env_flag(name: str, default: bool = False) -> bool:
-    value = os.getenv(name)
-    if value is None:
-        return default
-    return value.strip().lower() in {"1", "true", "yes", "on"}
-
-
-CURSOR_ENABLED = env_flag("EYE_ENABLE_CURSOR", default=True)
+MJPEG_PATH_CANDIDATES = tuple(
+    part.strip()
+    for part in os.getenv("EYE_MJPEG_PATHS", "/stream,/mjpeg,/cam.mjpeg,/video")
+    .split(",")
+    if part.strip()
+)

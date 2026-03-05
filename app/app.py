@@ -7,11 +7,6 @@ from flask_cors import CORS
 
 from app.config import FLASK_HOST, FLASK_PORT
 from app.routes.app_state import app_state_bp
-from app.routes.calibration import calibration_bp
-from app.routes.cursor import cursor_bp
-from app.routes.ingest import ingest_bp
-from app.routes.internal import internal_bp
-from app.routes.prefs import prefs_bp
 from app.routes.runtime import runtime_bp
 from app.routes.serial import serial_bp
 
@@ -31,11 +26,6 @@ def create_app() -> Flask:
     app.register_blueprint(app_state_bp)
     app.register_blueprint(runtime_bp)
     app.register_blueprint(serial_bp)
-    app.register_blueprint(cursor_bp)
-    app.register_blueprint(prefs_bp)
-    app.register_blueprint(calibration_bp)
-    app.register_blueprint(ingest_bp)
-    app.register_blueprint(internal_bp)
 
     return app
 

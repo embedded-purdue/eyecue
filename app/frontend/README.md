@@ -1,27 +1,27 @@
-# EyeCue Electron Frontend
+# EyeCue Electron Frontend (Minimal)
 
-Electron renderer for the EyeCue setup/calibration/settings flow.
+Single-page Electron UI for the prototype pipeline.
 
-## Runtime model
+## UI Contents
 
-- Electron main process starts Flask (`python3 -m app.app`) on launch.
-- Frontend pages call Flask JSON APIs at `http://127.0.0.1:5051`.
-- Backend owns runtime state, agent lifecycle, calibration session state, and preferences.
+- Network configuration form (SSID/password/serial port)
+- Connect button
+- Cursor-tracking toggle
+- Backend alert/status area
 
-## Main pages
+## Runtime Model
 
-1. `welcome.html` - startup bootstrap routing
-2. `connect.html` - serial/wired connection menu
-3. `flashing.html` - runtime start transition
-4. `calibration.html` - backend-backed calibration session
-5. `settings.html` - primary settings menu
-6. `advanced-settings.html` - advanced preferences
-7. `live-info.html` - runtime monitor
+- Electron starts Flask (`python3 -m app.app`).
+- Renderer calls Flask APIs at `http://127.0.0.1:5051`.
+- Renderer polls `/runtime/state` for live status and alerts.
 
-## Scripts
+## Main Files
 
-- `scripts/api-client.js` shared API wrapper for all pages
-- page-level scripts call `window.eyeApi.*` methods only
+- `main.js` (Electron lifecycle + backend process)
+- `pages/connect.html`
+- `scripts/connect.js`
+- `scripts/api-client.js`
+- `styles/main.css`
 
 ## Run
 
@@ -29,10 +29,4 @@ Electron renderer for the EyeCue setup/calibration/settings flow.
 cd app/frontend
 npm install
 npm start
-```
-
-Use debug mode:
-
-```bash
-npm run dev
 ```

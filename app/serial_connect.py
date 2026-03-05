@@ -28,6 +28,7 @@ from typing import Any, Optional, Tuple, List
 
 try:
     import serial
+    from serial import Serial
     from serial.tools import list_ports
 except Exception:  # pragma: no cover - dependency availability
     serial = None
@@ -114,7 +115,7 @@ def frame_payload(payload: bytes) -> bytes:
     return MAGIC + length + payload
 
 
-def send_wifi_credentials(ser: serial.Serial, ssid: str, password: str) -> None:
+def send_wifi_credentials(ser: Serial, ssid: str, password: str) -> None:
     msg = {
         "type": "wifi_config",
         "ssid": ssid,
@@ -127,7 +128,7 @@ def send_wifi_credentials(ser: serial.Serial, ssid: str, password: str) -> None:
 
 
 def read_lines_for(
-    ser: serial.Serial,
+    ser: Serial,
     deadline_s: float,
     *,
     want_ok: bool = True,

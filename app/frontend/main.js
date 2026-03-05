@@ -7,9 +7,10 @@ const { app, BrowserWindow } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const path = require('path');
+const fs = require('fs');
 
 const BACKEND_HOST = '127.0.0.1';
-const BACKEND_PORT = 5001;
+const BACKEND_PORT = 5051;
 const BACKEND_BASE = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
 
 let mainWindow = null;
@@ -92,7 +93,10 @@ function startBackendProcess() {
   }
 
   const projectRoot = path.resolve(__dirname, '..', '..');
-  backendProcess = spawn('python3', ['-m', 'app.app'], {
+  const venvPython = path.join(projectRoot, 'env', 'bin', 'python');
+  const pythonExec = fs.existsSync(venvPython) ? venvPython : 'python3';
+
+  backendProcess = spawn(pythonExec, ['-m', 'app.app'], {
     cwd: projectRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

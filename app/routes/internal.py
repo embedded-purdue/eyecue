@@ -52,6 +52,17 @@ def ingest_stats() -> tuple:
 @internal_bp.route("/cursor/latest", methods=["GET"])
 def cursor_latest() -> tuple:
     sample = runtime_store.get_latest_cursor()
+    if sample:
+        print(
+            (
+                "[TRACE][internal.cursor_latest] response sample "
+                f"seq={sample.get('seq')} ts_ms={sample.get('ts_ms')} "
+                f"x={sample.get('x')} y={sample.get('y')} source={sample.get('source')}"
+            ),
+            flush=True,
+        )
+    else:
+        print("[TRACE][internal.cursor_latest] response sample=None", flush=True)
     return jsonify({"ok": True, "data": sample}), 200
 
 

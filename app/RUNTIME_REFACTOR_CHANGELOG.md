@@ -2,6 +2,18 @@
 
 Date: 2026-02-19
 
+## Update: 2026-03-01
+
+- Added wireless video ingest endpoint `POST /ingest/wireless/frame` using multipart JPEG upload.
+- Added `WirelessVideoService` with:
+  - pluggable frame processor interface,
+  - default stub processor,
+  - in-memory ring buffers for frames and processing results,
+  - optional cursor publishing path into runtime state (`source=wireless`).
+- Extended runtime state with `wireless_video` counters/latency/error fields.
+- Added wireless client emulator under `app-tests/wireless-client/` for replaying local video into Flask ingest routes.
+- Added tests for wireless frame endpoint and wireless video service behavior.
+
 This file records what was changed during the diagram-aligned runtime refactor so future agents can quickly understand scope and avoid rework.
 
 ## Summary

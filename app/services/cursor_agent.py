@@ -32,6 +32,7 @@ class CursorAgent:
         if self._thread and self._thread.is_alive():
             return
         self._stop_event.clear()
+        print("[TRACE][cursor_agent] starting thread", flush=True)
         self._thread = threading.Thread(target=self._run, name="cursor-agent", daemon=True)
         self._thread.start()
 
@@ -73,6 +74,13 @@ class CursorAgent:
 
     def _apply_cursor(self, sample: Dict[str, Any], params: Dict[str, Any]) -> None:
         if not CURSOR_ENABLED or pyautogui is None:
+            print(
+                (
+                    "[TRACE][cursor_agent.apply] skip move "
+                    f"CURSOR_ENABLED={CURSOR_ENABLED} pyautogui_none={pyautogui is None}"
+                ),
+                flush=True,
+            )
             return
 
         x = float(sample.get("x", 0.0))
@@ -82,6 +90,13 @@ class CursorAgent:
         v_sens = max(1, int(params.get("vertical_sensitivity", 50))) / 50.0
 
         mode = params.get("cursor_mode", "abs")
+        print(
+            (
+                "[TRACE][cursor_agent.apply] moving "
+                f"x={x} y={y} mode={mode} h_sens={h_sens} v_sens={v_sens}"
+            ),
+            flush=True,
+        )
         if mode == "rel":
             pyautogui.moveRel(x * h_sens, y * v_sens)
         else:
@@ -103,8 +118,15 @@ class CursorAgent:
                 try:
                     sample = self._get_json("/internal/cursor/latest")
                     params = self._get_json("/internal/cursor/params") or {}
-
                     if sample:
+                        print(
+                            (
+                                "[TRACE][cursor_agent.loop] got sample "
+                                f"seq={sample.get('seq')} ts_ms={sample.get('ts_ms')} "
+                                f"x={sample.get('x')} y={sample.get('y')} source={sample.get('source')}"
+                            ),
+                            flush=True,
+                        )
                         connected = True
                         ts_ms = int(sample.get("ts_ms", int(time.time() * 1000)))
                         queue_lag_ms = int(time.time() * 1000) - ts_ms
@@ -130,9 +152,18 @@ class CursorAgent:
                             )
                         except Exception:
                             pass
+                    else:
+                        print("[TRACE][cursor_agent.loop] got sample=None", flush=True)
                 except Exception as exc:
                     self._errors_total += 1
                     self._last_error = str(exc)
+                    print(
+                        (
+                            "[TRACE][cursor_agent.loop] exception "
+                            f"base_url={self._base_url} error={exc}"
+                        ),
+                        flush=True,
+                    )
 
                 now = time.monotonic()
                 if (now - last_stats_at) >= AGENT_STATS_INTERVAL_S:

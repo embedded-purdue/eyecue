@@ -5,7 +5,7 @@ Electron renderer for the EyeCue setup/calibration/settings flow.
 ## Runtime model
 
 - Electron main process starts Flask (`python3 -m app.app`) on launch.
-- Frontend pages call Flask JSON APIs at `http://127.0.0.1:5001`.
+- Frontend pages call Flask JSON APIs at `http://127.0.0.1:5051`.
 - Backend owns runtime state, agent lifecycle, calibration session state, and preferences.
 
 ## Main pages

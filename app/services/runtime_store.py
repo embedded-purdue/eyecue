@@ -19,6 +19,7 @@ class RuntimeStore:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._seq = 0
+        self._last_stale_trace_ms = 0
         self._last_samples: Dict[str, Optional[Dict[str, Any]]] = {
             "serial": None,
             "wireless": None,
@@ -45,6 +46,21 @@ class RuntimeStore:
                 "device_id": None,
                 "last_error": None,
                 "updated_at": None,
+            },
+            "wireless_video": {
+                "frames_received": 0,
+                "frames_processed": 0,
+                "frames_dropped": 0,
+                "last_frame_ts_ms": None,
+                "last_processed_ts_ms": None,
+                "last_processing_error": None,
+                "last_processing_latency_ms": None,
+                "buffer_size": 0,
+                "processor_name": "unknown",
+                "cv_ready": False,
+                "cv_error": None,
+                "last_detection_ok": None,
+                "fallback_count": 0,
             },
             "cursor": {
                 "last_sample": None,
@@ -160,6 +176,26 @@ class RuntimeStore:
                     "updated_at": now_ms(),
                 }
             )
+            previous_processor_name = self._state["wireless_video"].get("processor_name", "unknown")
+            previous_cv_ready = bool(self._state["wireless_video"].get("cv_ready", False))
+            previous_cv_error = self._state["wireless_video"].get("cv_error")
+            self._state["wireless_video"].update(
+                {
+                    "frames_received": 0,
+                    "frames_processed": 0,
+                    "frames_dropped": 0,
+                    "last_frame_ts_ms": None,
+                    "last_processed_ts_ms": None,
+                    "last_processing_error": None,
+                    "last_processing_latency_ms": None,
+                    "buffer_size": 0,
+                    "processor_name": previous_processor_name,
+                    "cv_ready": previous_cv_ready,
+                    "cv_error": previous_cv_error,
+                    "last_detection_ok": None,
+                    "fallback_count": 0,
+                }
+            )
             self._state["cursor"].update(
                 {
                     "last_sample": None,
@@ -179,6 +215,10 @@ class RuntimeStore:
     def set_last_error(self, error: Optional[str]) -> None:
         with self._lock:
             self._state["last_error"] = error
+
+    def add_event(self, message: str) -> None:
+        with self._lock:
+            self._record_event_locked(message)
 
     def set_serial_status(
         self,
@@ -214,6 +254,79 @@ class RuntimeStore:
             wireless_state["last_error"] = last_error
             wireless_state["updated_at"] = now_ms()
             self._update_connected_locked()
+
+    def record_wireless_frame_ingest(self, metadata: Dict[str, Any]) -> None:
+        with self._lock:
+            video_state = self._state["wireless_video"]
+            first_frame = video_state["frames_received"] == 0
+            video_state["frames_received"] += 1
+            video_state["last_frame_ts_ms"] = int(metadata.get("frame_ts_ms") or now_ms())
+            if "buffer_size" in metadata:
+                video_state["buffer_size"] = int(metadata.get("buffer_size") or 0)
+            if first_frame:
+                self._record_event_locked("First wireless video frame received")
+
+    def set_wireless_video_processor_status(
+        self,
+        *,
+        processor_name: Optional[str] = None,
+        cv_ready: bool,
+        cv_error: Optional[str] = None,
+    ) -> None:
+        with self._lock:
+            video_state = self._state["wireless_video"]
+            previous_name = video_state.get("processor_name")
+            previous_ready = bool(video_state.get("cv_ready"))
+            previous_error = video_state.get("cv_error")
+
+            if processor_name is not None:
+                video_state["processor_name"] = str(processor_name)
+            video_state["cv_ready"] = bool(cv_ready)
+            video_state["cv_error"] = cv_error
+
+            current_name = video_state.get("processor_name")
+            if (previous_name, previous_ready, previous_error) != (
+                current_name,
+                bool(cv_ready),
+                cv_error,
+            ):
+                if cv_ready:
+                    self._record_event_locked(f"Wireless CV processor initialized: {current_name}")
+                else:
+                    reason = cv_error or "unknown error"
+                    self._record_event_locked(
+                        f"Wireless CV processor unavailable: {current_name} ({reason})"
+                    )
+
+    def record_wireless_frame_result(self, result_metadata: Dict[str, Any]) -> None:
+        with self._lock:
+            video_state = self._state["wireless_video"]
+            video_state["frames_processed"] += 1
+            video_state["last_processed_ts_ms"] = int(result_metadata.get("processed_ts_ms") or now_ms())
+            video_state["last_processing_latency_ms"] = result_metadata.get("latency_ms")
+            if "buffer_size" in result_metadata:
+                video_state["buffer_size"] = int(result_metadata.get("buffer_size") or 0)
+            if "detection_ok" in result_metadata:
+                video_state["last_detection_ok"] = bool(result_metadata.get("detection_ok"))
+
+            if result_metadata.get("dropped"):
+                video_state["frames_dropped"] += 1
+            if result_metadata.get("used_fallback"):
+                video_state["fallback_count"] += 1
+                self._record_event_locked("Wireless frame processing fallback engaged")
+
+            error = result_metadata.get("error")
+            video_state["last_processing_error"] = error
+            if error:
+                self._state["last_error"] = str(error)
+                self._record_event_locked(f"Wireless frame processing error: {error}")
+
+            if result_metadata.get("cursor_published"):
+                self._record_event_locked("Wireless frame processing published cursor sample")
+
+    def get_wireless_video_snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return copy.deepcopy(self._state["wireless_video"])
 
     def ingest_cursor_sample(self, payload: Dict[str, Any], *, default_source: str = "serial") -> Dict[str, Any]:
         with self._lock:
@@ -256,6 +369,14 @@ class RuntimeStore:
 
             self._fallback_active_source_locked()
             self._update_connected_locked()
+            print(
+                (
+                    "[TRACE][runtime_store.ingest_cursor] "
+                    f"source={source} seq={seq} ts_ms={ts_ms} x={x} y={y} "
+                    f"active_source={self._state.get('active_source')}"
+                ),
+                flush=True,
+            )
             return copy.deepcopy(sample)
 
     def get_latest_cursor(self) -> Optional[Dict[str, Any]]:
@@ -263,10 +384,32 @@ class RuntimeStore:
             self._fallback_active_source_locked()
             active = self._state["active_source"]
             if not active:
+                print("[TRACE][runtime_store.latest_cursor] no active source", flush=True)
                 return None
             sample = self._last_samples.get(active)
             if not self._sample_is_fresh_locked(sample):
+                ts = int(sample.get("ts_ms")) if sample and sample.get("ts_ms") is not None else None
+                age_ms = (now_ms() - ts) if ts is not None else None
+                now = now_ms()
+                if (now - self._last_stale_trace_ms) >= 1000:
+                    self._last_stale_trace_ms = now
+                    print(
+                        (
+                            "[TRACE][runtime_store.latest_cursor] stale sample "
+                            f"source={active} sample_ts_ms={ts} age_ms={age_ms} "
+                            f"stale_threshold_ms={SOURCE_STALE_MS}"
+                        ),
+                        flush=True,
+                    )
                 return None
+            print(
+                (
+                    "[TRACE][runtime_store.latest_cursor] serving sample "
+                    f"source={active} seq={sample.get('seq')} ts_ms={sample.get('ts_ms')} "
+                    f"x={sample.get('x')} y={sample.get('y')}"
+                ),
+                flush=True,
+            )
             return copy.deepcopy(sample)
 
     def set_cursor_applied(self, sample: Dict[str, Any], queue_lag_ms: Optional[int]) -> None:

@@ -5,7 +5,7 @@
 ✅ **Backend Server Running**
 ```bash
 ./restart_server.sh
-# Verify: curl http://127.0.0.1:5001/health
+# Verify: curl http://127.0.0.1:5051/health
 ```
 
 ✅ **Electron App**
@@ -282,21 +282,21 @@ After clicking all 9 nodes:
 ### Test All Endpoints
 ```bash
 # Health check
-curl http://127.0.0.1:5001/health
+curl http://127.0.0.1:5051/health
 
 # List serial ports
-curl http://127.0.0.1:5001/serial/ports
+curl http://127.0.0.1:5051/serial/ports
 
 # Get preferences
-curl http://127.0.0.1:5001/prefs
+curl http://127.0.0.1:5051/prefs
 
 # Update preferences (test)
-curl -X PUT http://127.0.0.1:5001/prefs \
+curl -X PUT http://127.0.0.1:5051/prefs \
   -H "Content-Type: application/json" \
   -d '{"horizontal_sensitivity": 75}'
 
 # Verify update
-curl http://127.0.0.1:5001/prefs
+curl http://127.0.0.1:5051/prefs
 
 # Check saved file
 cat ~/.eyecue/prefs.json

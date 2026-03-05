@@ -15,7 +15,7 @@ The virtual environment is already configured. Dependencies are installed.
 
 ### 2. Start the Server
 
-The server runs on **port 5001** (port 5000 is used by macOS Control Center).
+The server runs on **port 5051** (port 5000 is used by macOS Control Center).
 
 ```bash
 # Start server in background
@@ -25,7 +25,7 @@ The server runs on **port 5001** (port 5000 is used by macOS Control Center).
 ### 3. Check Server Status
 
 ```bash
-curl http://127.0.0.1:5001/health
+curl http://127.0.0.1:5051/health
 ```
 
 Expected response:
@@ -72,9 +72,9 @@ pkill -f "python.*run_server.py"
 .venv/bin/python run_server.py &
 ```
 
-**Check what's running on port 5001:**
+**Check what's running on port 5051:**
 ```bash
-lsof -i:5001
+lsof -i:5051
 ```
 
 ## API Endpoints
@@ -94,6 +94,14 @@ lsof -i:5001
 
 - `POST /cursor/update` - Update cursor position
   - Form params: `xPos`, `yPos`
+
+### Wireless Ingest Routes
+
+- `POST /ingest/wireless/frame` - Upload one JPEG frame from wireless sender
+  - `multipart/form-data` field: `frame`
+  - Optional form fields: `device_id`, `frame_ts_ms`, `seq`, `width`, `height`, `format`, `source_tag`
+- `POST /ingest/wireless/cursor` - Post cursor sample from wireless sender
+- `POST /ingest/wireless/stats` - Post wireless device stats
 
 ## Project Structure
 
@@ -139,8 +147,8 @@ tail -f server.log
 If you see "Address already in use":
 
 ```bash
-# Kill process on port 5001
-lsof -ti:5001 | xargs kill -9
+# Kill process on port 5051
+lsof -ti:5051 | xargs kill -9
 
 # Or use the restart script
 ./restart_server.sh
@@ -180,7 +188,7 @@ The Electron app in `app/frontend/` can make API calls to this server:
 
 ```javascript
 // Example: Connect to WiFi
-const response = await fetch('http://127.0.0.1:5001/serial/connect', {
+const response = await fetch('http://127.0.0.1:5051/serial/connect', {
   method: 'POST',
   headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
   body: new URLSearchParams({ 
@@ -191,3 +199,15 @@ const response = await fetch('http://127.0.0.1:5001/serial/connect', {
 ```
 
 See `app/frontend/scripts/connect.js` for implementation examples.
+
+## Wireless Video Client Emulator
+
+A standalone emulator client is available to test wireless frame ingest:
+
+```bash
+python3 app-tests/wireless-client/wireless_video_client.py \
+  --video-path test_vid/<video-file> \
+  --base-url http://127.0.0.1:5051
+```
+
+See `app-tests/wireless-client/README.md` for full options.

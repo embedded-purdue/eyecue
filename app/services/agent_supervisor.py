@@ -52,6 +52,7 @@ class AgentSupervisor:
     def start_cursor_agent(self) -> None:
         self.stop_cursor_agent()
         agent = CursorAgent(base_url=INTERNAL_BASE_URL)
+        print(agent)
         agent.start()
         with self._lock:
             self._cursor_agent = agent

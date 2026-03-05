@@ -18,4 +18,4 @@ echo "Starting new server..."
 sleep 2
 
 echo "Server restarted!"
-echo "Access at: http://127.0.0.1:5001"
+echo "Access at: http://127.0.0.1:5051"

@@ -1,6 +1,6 @@
 # EyeCue Agent Handoff
 
-Last updated: 2026-02-19
+Last updated: 2026-03-01
 
 This document is for future coding agents and maintainers. It summarizes the current runtime architecture, key contracts, and practical implementation notes after the Electron + Flask runtime refactor.
 
@@ -25,6 +25,8 @@ This document is for future coding agents and maintainers. It summarizes the cur
   - Polls internal Flask cursor endpoints at capped rate and applies cursor updates (if enabled)
 - `CalibrationService` (`app/services/calibration_service.py`)
   - Session state machine for calibration lifecycle
+- `WirelessVideoService` (`app/services/wireless_video_service.py`)
+  - Receives wireless JPEG frames, calls pluggable frame processor, stores frame/result ring buffers, and publishes cursor samples from processed frames when available
 
 ## 2) API surface
 
@@ -51,6 +53,7 @@ This document is for future coding agents and maintainers. It summarizes the cur
 
 - `POST /ingest/wireless/cursor`
 - `POST /ingest/wireless/stats`
+- `POST /ingest/wireless/frame` (multipart JPEG upload, ack response)
 
 ### Internal localhost-only
 
@@ -126,8 +129,32 @@ npm start
 Run tests:
 
 ```bash
-python3 -m unittest discover tests
+python3 -m unittest discover app-tests
 ```
+
+Serial device emulator (Raspberry Pi / test harness):
+
+```bash
+python3 app-tests/serial-client-test-script/rpi_serial_device_emulator.py \
+  --port /dev/ttyGS0 \
+  --baud 115200
+```
+
+Wireless client emulator:
+
+```bash
+python3 app-tests/wireless-client/wireless_video_client.py \
+  --video-path test_vid/<video-file> \
+  --base-url http://127.0.0.1:5051
+```
+
+Serial protocol reference used by app:
+- Host -> device frame: `CFGW` + u16 length + JSON payload
+- Current payload sent by app: `{\"type\":\"wifi_config\",\"ssid\":\"...\",\"password\":\"...\"}`
+- Device -> host lines:
+  - text ACK/status: `OK`, `Connected!`, `IP address: ...`
+  - JSON line with `x` and `y` => cursor sample
+  - JSON line without `x`/`y` => stats payload
 
 ## 7) Known gaps / next improvements
 
@@ -137,3 +164,4 @@ python3 -m unittest discover tests
 - Add stronger serial health checks (heartbeat/ACK format from firmware)
 - Tighten internal endpoint auth if deployed beyond local desktop usage
 - Expand integration tests with mocked serial and mocked wireless ingest
+- Implement real frame processor integration (current processor is a stub that returns diagnostics but no cursor output unless overridden)

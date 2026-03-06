@@ -185,7 +185,7 @@ class GazeAngleTester:
         overlay_img = np.zeros((overlay_size[1], overlay_size[0], 3), dtype=np.uint8)
         
         # create video window explicitly
-        cv2.namedWindow("Gaze Tracker - Video Input", cv2.WINDOW_NORMAL)
+        # cv2.namedWindow("Gaze Tracker - Video Input", cv2.WINDOW_NORMAL)
         
         # get first frame
         if self.esp32_capture:

@@ -213,7 +213,7 @@ class PipelineController:
             saw_ok, ip_addr = self._wait_for_ack_and_ip(ser, timeout_s=SERIAL_ACK_TIMEOUT_S)
 
         if not saw_ok:
-            raise RuntimeError("ESP32 did not acknowledge credentials.")
+            raise RuntimeError(f'ESP32 did not acknowledge credentials. ({serial_port} {ip_addr})')
         if not ip_addr:
             raise RuntimeError("ESP32 acknowledged but no IP address was received.")
 

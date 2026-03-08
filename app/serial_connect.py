@@ -28,7 +28,7 @@ import random
 import re
 import time
 import getpass
-from typing import Any, Optional, Tuple, List
+from typing import Any, Callable, Optional, Tuple, List
 
 try:
     import serial
@@ -175,6 +175,7 @@ def read_handshake_signals(
     *,
     expected_nonce: Optional[str],
     timeout_s: float,
+    line_logger: Optional[Callable[[str], None]] = None,
 ) -> Tuple[bool, Optional[str], Optional[str], List[str]]:
     """Read serial lines until timeout and parse ACK/OK/ERR signals."""
     end = time.monotonic() + max(0.1, float(timeout_s))
@@ -192,12 +193,17 @@ def read_handshake_signals(
         if not line:
             continue
         lines.append(line)
+        if line_logger:
+            try:
+                line_logger(line)
+            except Exception:
+                pass
 
         kind, value = parse_handshake_line(line)
         if kind == "ack":
             if expected_nonce is None or value == expected_nonce:
                 saw_ack = True
-        elif kind == "ok":
+        if kind == "ok":
             if value:
                 ok_ip = value
                 return saw_ack, ok_ip, None, lines

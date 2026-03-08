@@ -17,16 +17,16 @@ import socket
 import sys
 import time
 
-import network # type: ignore
+import network  # type: ignore
 
 try:
-    import uselect as select # type: ignore
+    import uselect as select  # type: ignore
 except ImportError:
     import select
 
 
 WIFI_CONFIG_PREFIX = "WIFI_CONFIG "
-WIFI_CONNECT_TIMEOUT_MS = 20_000
+WIFI_CONNECT_TIMEOUT_MS = 30_000
 FRAME_INTERVAL_MS = 150  # ~6.6 FPS
 BOUNDARY = b"frame"
 EYE_JPEG_PATH = "eye.jpg"
@@ -49,7 +49,7 @@ def _as_bytes(raw):
 
 
 def serial_write_line(text):
-    _stdin, stdout = _serial_streams() # type: ignore
+    _stdin, stdout = _serial_streams()
     payload = _as_bytes(text)
     if not payload.endswith(b"\n"):
         payload += b"\n"
@@ -131,7 +131,6 @@ def wait_for_wifi_payload():
 
         rx_buffer += chunk
         lines, rx_buffer = _split_lines(rx_buffer)
-
         for raw_line in lines:
             try:
                 line = raw_line.decode("utf-8", "replace").strip()
@@ -140,18 +139,20 @@ def wait_for_wifi_payload():
             if not line:
                 continue
 
+            # Explicit debug visibility for host-side transcript logs.
+            serial_write_line("INFO serial_rx {}".format(line))
+
             payload, error = _parse_wifi_config_line(line)
             if error:
                 serial_write_line("ERR WIFI_CONFIG {}".format(error))
                 continue
             if payload is None:
-                # Ignore unrelated REPL noise.
                 continue
 
             nonce = payload.get("nonce", "")
             ssid = payload.get("ssid", "")
             serial_write_line("ACK WIFI_CONFIG {}".format(nonce))
-            serial_write_line("INFO received wifi_config ssid={} nonce={}".format(ssid, nonce))
+            serial_write_line("INFO received_wifi_config ssid={} nonce={}".format(ssid, nonce))
             return payload
 
 

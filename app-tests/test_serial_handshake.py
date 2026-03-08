@@ -33,6 +33,7 @@ class SerialHandshakeTests(unittest.TestCase):
         self.assertEqual(serial_connect.parse_handshake_line("noise"), ("ignore", "noise"))
 
     def test_read_handshake_signals_ack_then_ok(self):
+        captured = []
         ser = _FakeReadSerial(
             [
                 b"READY pico-w line-json receiver\n",
@@ -44,11 +45,20 @@ class SerialHandshakeTests(unittest.TestCase):
             ser,
             expected_nonce="abc-123",
             timeout_s=0.1,
+            line_logger=captured.append,
         )
         self.assertTrue(saw_ack)
         self.assertEqual(ip_addr, "192.168.4.10")
         self.assertIsNone(err)
         self.assertIn("ACK WIFI_CONFIG abc-123", lines)
+        self.assertEqual(
+            captured,
+            [
+                "READY pico-w line-json receiver",
+                "ACK WIFI_CONFIG abc-123",
+                "OK 192.168.4.10",
+            ],
+        )
 
     def test_read_handshake_signals_ok_without_ack(self):
         ser = _FakeReadSerial([b"OK 10.0.0.55\n"])
@@ -71,6 +81,23 @@ class SerialHandshakeTests(unittest.TestCase):
         self.assertFalse(saw_ack)
         self.assertIsNone(ip_addr)
         self.assertEqual(err, "WIFI timeout")
+
+    def test_read_handshake_signals_ignores_wrong_ack_nonce(self):
+        ser = _FakeReadSerial(
+            [
+                b"ACK WIFI_CONFIG wrong-nonce\n",
+                b"INFO waiting\n",
+                b"OK 192.168.1.44\n",
+            ]
+        )
+        saw_ack, ip_addr, err, _lines = serial_connect.read_handshake_signals(
+            ser,
+            expected_nonce="expected-nonce",
+            timeout_s=0.1,
+        )
+        self.assertFalse(saw_ack)
+        self.assertEqual(ip_addr, "192.168.1.44")
+        self.assertIsNone(err)
 
 
 if __name__ == "__main__":

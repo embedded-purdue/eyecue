@@ -13,6 +13,9 @@ from app import serial_connect
 from app.config import (
     BYPASS_SERIAL,
     MJPEG_PATH_CANDIDATES,
+    SERIAL_ACK_RETRIES,
+    SERIAL_ACK_TIMEOUT_S,
+    SERIAL_DEBUG,
     SERIAL_HANDSHAKE_ATTEMPTS,
     SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S,
     STREAM_RETRY_DELAY_S,
@@ -80,6 +83,13 @@ class PipelineController:
         self._state.alerts.append(AlertEntry(id=self._alert_id, ts_ms=now_ms(), level=level, message=message))
         if len(self._state.alerts) > 100:
             self._state.alerts = self._state.alerts[-100:]
+
+    def _emit_serial_debug(self, message: str) -> None:
+        if not SERIAL_DEBUG:
+            return
+        print(f"[serial] {message}", flush=True)
+        with self._lock:
+            self._append_alert_locked("info", message)
 
     def _set_error_locked(self, message: str) -> None:
         if self._state.last_error == message:
@@ -159,15 +169,50 @@ class PipelineController:
         ssid: str,
         password: str,
         timeout_s: float,
-    ) -> Tuple[bool, Optional[str], Optional[str], str]:
+    ) -> Tuple[bool, Optional[str], Optional[str], str, List[str]]:
+        """Two-phase handshake.
+
+        Phase 1: send WIFI_CONFIG with quick ACK retries.
+        Phase 2: after ACK, wait longer for OK <ip> / ERR.
+        """
         nonce = serial_connect.make_nonce()
-        serial_connect.send_wifi_config_command(ser, ssid, password, nonce)
-        saw_ack, ip_addr, device_error, _lines = serial_connect.read_handshake_signals(
+        all_lines: List[str] = []
+        saw_ack = False
+        line_logger = (lambda line: self._emit_serial_debug(f"SERIAL RX {line}")) if SERIAL_DEBUG else None
+
+        for ack_attempt in range(1, max(1, SERIAL_ACK_RETRIES) + 1):
+            tx_line = serial_connect.send_wifi_config_command(ser, ssid, password, nonce)
+            self._emit_serial_debug(
+                f"SERIAL TX ack_attempt={ack_attempt}/{max(1, SERIAL_ACK_RETRIES)} {tx_line}"
+            )
+            ack_seen, ip_addr, device_error, lines = serial_connect.read_handshake_signals(
+                ser,
+                expected_nonce=nonce,
+                timeout_s=SERIAL_ACK_TIMEOUT_S,
+                line_logger=line_logger,
+            )
+            all_lines.extend(lines)
+
+            if device_error:
+                return saw_ack or ack_seen, None, device_error, nonce, all_lines
+            if ip_addr:
+                return saw_ack or ack_seen, ip_addr, None, nonce, all_lines
+            if ack_seen:
+                saw_ack = True
+                break
+
+        if not saw_ack:
+            return False, None, None, nonce, all_lines
+
+        self._emit_serial_debug(f"SERIAL ACK nonce={nonce}; waiting for OK/ERR timeout={timeout_s}s")
+        _ack_seen, ip_addr, device_error, lines = serial_connect.read_handshake_signals(
             ser,
             expected_nonce=nonce,
             timeout_s=timeout_s,
+            line_logger=line_logger,
         )
-        return saw_ack, ip_addr, device_error, nonce
+        all_lines.extend(lines)
+        return True, ip_addr, device_error, nonce, all_lines
 
     def _run_pipeline(self, *, ssid: str, password: str, serial_port: str, baud: int) -> None:
         try:
@@ -207,7 +252,7 @@ class PipelineController:
                         f"Sending Wi-Fi config over serial (attempt {attempt}/{SERIAL_HANDSHAKE_ATTEMPTS})…",
                     )
 
-                saw_ack, ip_addr, device_error, nonce = self._run_serial_handshake_attempt(
+                saw_ack, ip_addr, device_error, nonce, lines = self._run_serial_handshake_attempt(
                     ser,
                     ssid=ssid,
                     password=password,
@@ -226,9 +271,9 @@ class PipelineController:
                     break
 
                 if saw_ack:
-                    last_status = "ACK seen but no OK <ip> yet"
+                    last_status = f"ACK seen but no OK <ip> yet (rx_lines={len(lines)})"
                 else:
-                    last_status = "no ACK/OK seen"
+                    last_status = f"no ACK/OK seen (rx_lines={len(lines)})"
 
                 with self._lock:
                     self._append_alert_locked(
@@ -359,6 +404,7 @@ class PipelineController:
         try:
             x = cursor.get("x")
             y = cursor.get("y")
+            confidence = cursor.get("confidence")
 
             assert x is not None
             assert y is not None
@@ -366,11 +412,8 @@ class PipelineController:
             x = float(x)
             y = float(y)
 
-            
-            with self._lock:
-                self._append_alert_locked("info", f'Mouse Position: ({x}, {y})')
-
-
+            if SERIAL_DEBUG:
+                print(f"[cursor] moveTo x={x} y={y} confidence={confidence}", flush=True)
             pyautogui.moveTo(x, y)
         except Exception as exc:
             with self._lock:

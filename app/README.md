@@ -1,5 +1,9 @@
 # EyeCue Flask Backend (Minimal Prototype)
 
+## Build
+
+`npx electron-forge make` packages a binary in `frontend/out/make`
+
 ## Overview
 
 This backend implements one prototype pipeline:

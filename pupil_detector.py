@@ -29,11 +29,22 @@ def detect_pupil_contour(frame):
     # apply slight blur to reduce noise
     blurred = cv2.GaussianBlur(roi, (3, 3), 0)
 
-    # use fixed threshold for darkest pixels (pupil is typically < 30% of max brightness)
-    # this finds the darkest regions more reliably
+    # use adaptive threshold based on image brightness
+    # For bright images (like overexposed streams), use a more aggressive threshold
     mean_intensity = np.mean(blurred)
-    threshold_value = max(30, mean_intensity * 0.4)  # adaptive but conservative
-    print(f"[DEBUG] Mean intensity: {mean_intensity:.1f}, Threshold: {threshold_value:.1f}")
+    min_intensity = np.min(blurred)
+
+    # If the darkest pixel is still quite bright (>80), the image is overexposed
+    # Use a higher threshold percentage to still capture the relatively darker regions
+    if min_intensity > 80:
+        # Overexposed - use 65% of mean to capture the pupil
+        threshold_value = mean_intensity * 0.65
+        print(f"[DEBUG] OVEREXPOSED image detected (min={min_intensity})")
+    else:
+        # Normal exposure - use conservative threshold
+        threshold_value = max(30, mean_intensity * 0.4)
+
+    print(f"[DEBUG] Mean intensity: {mean_intensity:.1f}, Min: {min_intensity}, Threshold: {threshold_value:.1f}")
     _, thresh = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
     
     # morphological operations to clean up - remove small noise

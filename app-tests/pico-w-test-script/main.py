@@ -1,10 +1,15 @@
-"""Pico W MicroPython test harness for EyeCue serial + MJPEG pipeline.
+"""Pico W MicroPython receiver for EyeCue serial + MJPEG pipeline.
 
-Behavior:
-- Reads CFGW-framed JSON over USB serial.
-- Expects payload: {"type":"wifi_config","ssid":"...","password":"..."}.
-- Connects to Wi-Fi and replies: "OK <ip>".
-- Serves /stream as an MJPEG endpoint with a repeated placeholder JPEG frame.
+Protocol:
+- Host -> device:
+    WIFI_CONFIG {"ssid":"...","password":"...","nonce":"..."}\n
+- Device -> host:
+    ACK WIFI_CONFIG <nonce>
+    OK <ip>
+    ERR <domain> <reason>
+
+Stream:
+- GET /stream serves multipart MJPEG using eye.jpg from Pico filesystem.
 """
 
 import json
@@ -12,64 +17,19 @@ import socket
 import sys
 import time
 
-import network
+import network # type: ignore
 
 try:
-    import uselect as select
+    import uselect as select # type: ignore
 except ImportError:
     import select
 
 
-MAGIC = b"CFGW"
-SERIAL_BAUD_HINT = 115200
+WIFI_CONFIG_PREFIX = "WIFI_CONFIG "
 WIFI_CONNECT_TIMEOUT_MS = 20_000
-FRAME_INTERVAL_MS = 150  # ~6.6 FPS placeholder stream
+FRAME_INTERVAL_MS = 150  # ~6.6 FPS
 BOUNDARY = b"frame"
-
-# Valid 1x1 JPEG generated once and embedded as static bytes.
-JPEG_PLACEHOLDER = (
-    b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00"
-    b"\xff\xdb\x00C\x00\x06\x04\x05\x06\x05\x04\x06\x06\x05\x06\x07\x07\x06"
-    b"\x08\n\x10\n\n\t\t\n\x14\x0e\x0f\x0c\x10\x17\x14\x18\x18\x17\x14\x16\x16"
-    b"\x1a\x1d%\x1f\x1a\x1b#\x1c\x16\x16 , #&')*)\x19\x1f-0-(0%()(\xff\xdb\x00C"
-    b"\x01\x07\x07\x07\n\x08\n\x13\n\n\x13(((((((((((((((((((((((((((((((((((("
-    b"((((((((((((((\xff\xc0\x00\x11\x08\x00\x01\x00\x01\x03\x01\"\x00\x02\x11"
-    b"\x01\x03\x11\x01\xff\xc4\x00\x1f\x00\x00\x01\x05\x01\x01\x01\x01\x01\x01"
-    b"\x00\x00\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b"
-    b"\xff\xc4\x00\xb5\x10\x00\x02\x01\x03\x03\x02\x04\x03\x05\x05\x04\x04\x00"
-    b"\x00\x01}\x01\x02\x03\x00\x04\x11\x05\x12!1A\x06\x13Qa\x07\"q\x142\x81\x91"
-    b"\xa1\x08#B\xb1\xc1\x15R\xd1\xf0$3br\x82\t\n\x16\x17\x18\x19\x1a%&'()*456789:"
-    b"CDEFGHIJSTUVWXYZcdefghijstuvwxyz\x83\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94"
-    b"\x95\x96\x97\x98\x99\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5"
-    b"\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6"
-    b"\xd7\xd8\xd9\xda\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf1\xf2\xf3\xf4\xf5"
-    b"\xf6\xf7\xf8\xf9\xfa\xff\xc4\x00\x1f\x01\x00\x03\x01\x01\x01\x01\x01\x01\x01"
-    b"\x01\x01\x00\x00\x00\x00\x00\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\xff"
-    b"\xc4\x00\xb5\x11\x00\x02\x01\x02\x04\x04\x03\x04\x07\x05\x04\x04\x00\x01\x02"
-    b"w\x00\x01\x02\x03\x11\x04\x05!1\x06\x12AQ\x07aq\x13\"2\x81\x08\x14B\x91\xa1"
-    b"\xb1\xc1\t#3R\xf0\x15br\xd1\n\x16$4\xe1%\xf1\x17\x18\x19\x1a&'()*56789:CDEFG"
-    b"HIJSTUVWXYZcdefghijstuvwxyz\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x92\x93\x94"
-    b"\x95\x96\x97\x98\x99\x9a\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xb2\xb3\xb4\xb5"
-    b"\xb6\xb7\xb8\xb9\xba\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xd2\xd3\xd4\xd5\xd6"
-    b"\xd7\xd8\xd9\xda\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xf2\xf3\xf4\xf5\xf6\xf7"
-    b"\xf8\xf9\xfa\xff\xda\x00\x0c\x03\x01\x00\x02\x11\x03\x11\x00?\x00\xf9R\x8a"
-    b"(\xa0\x0f\xff\xd9"
-)
-
-STREAM_HEADERS = (
-    b"HTTP/1.1 200 OK\r\n"
-    b"Connection: close\r\n"
-    b"Cache-Control: no-cache\r\n"
-    b"Pragma: no-cache\r\n"
-    b"Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
-    b"\r\n"
-)
-STREAM_PART_PREFIX = (
-    b"--" + BOUNDARY + b"\r\n"
-    b"Content-Type: image/jpeg\r\n"
-    b"Content-Length: " + str(len(JPEG_PLACEHOLDER)).encode("ascii") + b"\r\n"
-    b"\r\n"
-)
+EYE_JPEG_PATH = "eye.jpg"
 
 
 def _serial_streams():
@@ -89,15 +49,16 @@ def _as_bytes(raw):
 
 
 def serial_write_line(text):
-    _stdin, stdout = _serial_streams()
+    _stdin, stdout = _serial_streams() # type: ignore
     payload = _as_bytes(text)
     if not payload.endswith(b"\n"):
         payload += b"\n"
+
     try:
         stdout.write(payload)
     except TypeError:
-        # Some MicroPython builds expect str on sys.stdout (non-buffer variant).
         sys.stdout.write(payload.decode("utf-8", "replace"))
+
     try:
         stdout.flush()
     except Exception:
@@ -107,49 +68,53 @@ def serial_write_line(text):
             pass
 
 
-def parse_cfgw_packets(rx_buffer):
-    """Parse zero or more CFGW packets.
+def _split_lines(buffer):
+    if not buffer:
+        return [], b""
 
-    Returns:
-      (packets, remainder_buffer)
-    """
-    packets = []
-    data = bytes(rx_buffer)
-    total = len(data)
-    cursor = 0
-
+    lines = []
+    start = 0
     while True:
-        start = data.find(MAGIC, cursor)
-        if start < 0:
-            # Keep only a tiny tail so partial "CFGW" can be completed by next chunk.
-            tail_start = total - 3 if total > 3 else 0
-            if tail_start < cursor:
-                tail_start = cursor
-            return packets, bytearray(data[tail_start:])
+        idx = buffer.find(b"\n", start)
+        if idx < 0:
+            break
+        line = buffer[start:idx].rstrip(b"\r")
+        lines.append(line)
+        start = idx + 1
+    return lines, buffer[start:]
 
-        if (total - start) < 6:
-            # Not enough bytes for magic + length header yet.
-            return packets, bytearray(data[start:])
 
-        payload_len = (data[start + 4] << 8) | data[start + 5]
-        frame_end = start + 6 + payload_len
-        if total < frame_end:
-            # Partial frame, keep from magic onward.
-            return packets, bytearray(data[start:])
+def _parse_wifi_config_line(line):
+    text = (line or "").strip()
+    if not text.startswith(WIFI_CONFIG_PREFIX):
+        return None, None
 
-        packets.append(data[start + 6:frame_end])
-        cursor = frame_end
+    payload_text = text[len(WIFI_CONFIG_PREFIX):].strip()
+    try:
+        payload = json.loads(payload_text)
+    except Exception as exc:
+        return None, "invalid_json {}".format(exc)
+
+    if not isinstance(payload, dict):
+        return None, "payload_not_object"
+
+    ssid = payload.get("ssid")
+    password = payload.get("password")
+    nonce = payload.get("nonce")
+    if not isinstance(ssid, str) or not isinstance(password, str) or not isinstance(nonce, str):
+        return None, "missing_ssid_password_or_nonce"
+
+    return payload, None
 
 
 def wait_for_wifi_payload():
     stdin, _stdout = _serial_streams()
     poller = select.poll()
     poller.register(sys.stdin, select.POLLIN)
-    rx_buffer = bytearray()
+    rx_buffer = b""
 
-    serial_write_line("READY pico-w cfgw receiver")
-    serial_write_line("INFO waiting for CFGW payload over USB serial")
-    serial_write_line("INFO host should use baud {}".format(SERIAL_BAUD_HINT))
+    serial_write_line("READY pico-w line-json receiver")
+    serial_write_line("INFO waiting for WIFI_CONFIG line over USB serial")
 
     while True:
         events = poller.poll(200)
@@ -164,31 +129,29 @@ def wait_for_wifi_payload():
         if not chunk:
             continue
 
-        rx_buffer.extend(chunk)
+        rx_buffer += chunk
+        lines, rx_buffer = _split_lines(rx_buffer)
 
-        packets, rx_buffer = parse_cfgw_packets(rx_buffer)
-        for payload_bytes in packets:
+        for raw_line in lines:
             try:
-                payload = json.loads(payload_bytes.decode("utf-8"))
-            except Exception as exc:
-                serial_write_line("ERR invalid_json {}".format(exc))
+                line = raw_line.decode("utf-8", "replace").strip()
+            except Exception:
+                continue
+            if not line:
                 continue
 
-            if not isinstance(payload, dict):
-                serial_write_line("ERR payload_not_object")
+            payload, error = _parse_wifi_config_line(line)
+            if error:
+                serial_write_line("ERR WIFI_CONFIG {}".format(error))
+                continue
+            if payload is None:
+                # Ignore unrelated REPL noise.
                 continue
 
-            if payload.get("type") != "wifi_config":
-                serial_write_line("ERR invalid_type")
-                continue
-
-            ssid = payload.get("ssid")
-            password = payload.get("password")
-            if not isinstance(ssid, str) or not isinstance(password, str):
-                serial_write_line("ERR missing_ssid_or_password")
-                continue
-
-            serial_write_line("INFO received wifi_config for ssid={}".format(ssid))
+            nonce = payload.get("nonce", "")
+            ssid = payload.get("ssid", "")
+            serial_write_line("ACK WIFI_CONFIG {}".format(nonce))
+            serial_write_line("INFO received wifi_config ssid={} nonce={}".format(ssid, nonce))
             return payload
 
 
@@ -211,22 +174,47 @@ def connect_wifi(ssid, password):
             raise RuntimeError("wifi_connect_timeout")
         time.sleep_ms(200)
 
-    ip_addr = wlan.ifconfig()[0]
-    return wlan, ip_addr
+    return wlan.ifconfig()[0]
+
+
+def load_eye_jpeg(path):
+    try:
+        with open(path, "rb") as f:
+            jpeg = f.read()
+    except Exception as exc:
+        raise RuntimeError("jpeg_missing {}".format(exc))
+
+    if not jpeg:
+        raise RuntimeError("jpeg_empty")
+    if len(jpeg) < 4:
+        raise RuntimeError("jpeg_too_small")
+    if not jpeg.startswith(b"\xff\xd8") or not jpeg.endswith(b"\xff\xd9"):
+        raise RuntimeError("jpeg_invalid_markers")
+    return jpeg
+
+
+def _send_all(conn, payload):
+    view = payload
+    while view:
+        sent = conn.send(view)
+        if sent is None or sent <= 0:
+            raise OSError("socket_send_failed")
+        view = view[sent:]
 
 
 def send_404(conn):
-    conn.send(
+    _send_all(
+        conn,
         b"HTTP/1.1 404 Not Found\r\n"
         b"Connection: close\r\n"
         b"Content-Type: text/plain\r\n"
         b"Content-Length: 9\r\n"
         b"\r\n"
-        b"not found"
+        b"not found",
     )
 
 
-def handle_client(conn):
+def handle_client(conn, jpeg_bytes):
     conn.settimeout(2)
     request = b""
     while b"\r\n\r\n" not in request and len(request) < 1024:
@@ -245,22 +233,36 @@ def handle_client(conn):
     if request_text.startswith("GET "):
         parts = request_text.split(" ")
         if len(parts) >= 2:
-            path = parts[1]
+            path = parts[1].split("?", 1)[0]
 
     if path != "/stream":
         send_404(conn)
         return
 
-    conn.send(STREAM_HEADERS)
+    stream_headers = (
+        b"HTTP/1.1 200 OK\r\n"
+        b"Connection: close\r\n"
+        b"Cache-Control: no-cache\r\n"
+        b"Pragma: no-cache\r\n"
+        b"Content-Type: multipart/x-mixed-replace; boundary=frame\r\n"
+        b"\r\n"
+    )
+    part_prefix = (
+        b"--" + BOUNDARY + b"\r\n"
+        b"Content-Type: image/jpeg\r\n"
+        b"Content-Length: " + str(len(jpeg_bytes)).encode("ascii") + b"\r\n"
+        b"\r\n"
+    )
 
+    _send_all(conn, stream_headers)
     while True:
-        conn.send(STREAM_PART_PREFIX)
-        conn.send(JPEG_PLACEHOLDER)
-        conn.send(b"\r\n")
+        _send_all(conn, part_prefix)
+        _send_all(conn, jpeg_bytes)
+        _send_all(conn, b"\r\n")
         time.sleep_ms(FRAME_INTERVAL_MS)
 
 
-def serve_mjpeg():
+def serve_mjpeg(jpeg_bytes):
     addr = socket.getaddrinfo("0.0.0.0", 80)[0][-1]
     sock = socket.socket()
     try:
@@ -281,9 +283,8 @@ def serve_mjpeg():
 
         try:
             serial_write_line("INFO client_connected {}".format(remote))
-            handle_client(conn)
+            handle_client(conn, jpeg_bytes)
         except Exception:
-            # Client disconnected or parse error; continue serving others.
             pass
         finally:
             try:
@@ -298,16 +299,22 @@ def main():
     password = payload.get("password", "")
 
     try:
-        _wlan, ip_addr = connect_wifi(ssid, password)
+        ip_addr = connect_wifi(ssid, password)
     except Exception as exc:
-        serial_write_line("ERR wifi_connect_failed {}".format(exc))
+        serial_write_line("ERR WIFI {}".format(exc))
         return
 
-    # The host backend watches for line starting with OK and an IPv4 token.
+    try:
+        jpeg_bytes = load_eye_jpeg(EYE_JPEG_PATH)
+    except Exception as exc:
+        serial_write_line("ERR JPEG {}".format(exc))
+        return
+
     serial_write_line("OK {}".format(ip_addr))
     serial_write_line("INFO wifi_connected ip={}".format(ip_addr))
+    serial_write_line("INFO jpeg_loaded path={} bytes={}".format(EYE_JPEG_PATH, len(jpeg_bytes)))
 
-    serve_mjpeg()
+    serve_mjpeg(jpeg_bytes)
 
 
 main()

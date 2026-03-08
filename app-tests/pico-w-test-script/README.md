@@ -1,59 +1,79 @@
 # Pico W Receiver Stub (MicroPython)
 
-This script emulates the receiving end of the current EyeCue pipeline on a Raspberry Pi Pico W.
+This script emulates the receiving end of the EyeCue pipeline on Raspberry Pi Pico W.
 
-It does the following:
+## Serial Protocol
 
-- waits for `CFGW + u16 + JSON` over USB serial
-- expects payload:
-  - `{"type":"wifi_config","ssid":"...","password":"..."}`
-- connects to Wi-Fi with `network.WLAN(network.STA_IF)`
-- sends `OK <ipv4>` over serial once connected
-- serves `GET /stream` on port `80` as MJPEG
-- streams a repeated tiny placeholder JPEG frame (no camera yet)
+Host sends one line:
 
-## Files
+```text
+WIFI_CONFIG {"ssid":"...","password":"...","nonce":"..."}
+```
 
-- `main.py`: MicroPython firmware script to copy to Pico W.
+Pico replies:
 
-## Flash / Run
+- `ACK WIFI_CONFIG <nonce>`
+- `OK <ipv4>` on success
+- `ERR <domain> <reason>` on failure (for example `ERR WIFI ...` or `ERR JPEG ...`)
 
-1. Install MicroPython on Pico W.
-2. Copy `main.py` to the Pico W filesystem so it runs at boot.
-3. Plug Pico W into the machine running EyeCue.
-4. In EyeCue connect UI, pick the Pico W serial device and submit SSID/password.
+The script ignores unrelated REPL chatter lines.
 
-## Protocol Notes
+## Stream Behavior
 
-- Host app sends `CFGW` framed binary payload.
-- Pico script replies with:
-  - `OK <ip>`
-- Backend then requests:
-  - `http://<ip>/stream`
+- Pico loads `eye.jpg` from its local filesystem at boot.
+- `GET /stream` on port `80` serves strict multipart MJPEG with that JPEG repeated.
+- Non-`/stream` requests return `404`.
 
-Important:
+## Convert Your Eye Image
 
-- Stream is served on port `80` (default HTTP).
-- The current backend expects a bare IPv4 in the ACK line.
+Example deterministic conversion using ImageMagick:
 
-## Quick Validation
+```bash
+magick input-eye.png \
+  -resize 320x240^ \
+  -gravity center \
+  -extent 320x240 \
+  -colorspace sRGB \
+  -interlace none \
+  -quality 75 \
+  eye.jpg
+```
+
+Recommended target:
+
+- baseline JPEG (non-progressive)
+- RGB/sRGB
+- around `320x240`
+- quality `70-85`
+
+## Compress JPG
+
+```bash
+magick input-eye2.jpg -resize 320x240^ -gravity center -extent 320x240 -colorspace sRGB -interlace none -quality 75 eye2.jpg
+```
+
+## Upload to Pico W
+
+```bash
+mpremote cp app-tests/pico-w-test-script/main.py :main.py
+mpremote cp eye.jpg :eye.jpg
+```
+
+Reset Pico W after upload.
+
+## Run / Validate
 
 1. Start backend + Electron app.
-2. Connect using Pico W serial port.
-3. Confirm status alerts progress to:
-   - `Network connected. Safe to unplug device.`
-   - `Attempting to open camera stream…`
-   - `Camera stream connected.`
-4. Call `/runtime/state` and confirm:
-   - `stream_url` is set
-   - `frames_processed` increases over time
+2. Select Pico USB serial port in connect UI.
+3. Submit SSID/password once.
+4. Expect alert progression:
+   - network connected
+   - attempting stream
+   - stream connected
+5. Verify `/runtime/state` shows:
+   - `stream_url` set
+   - `frames_processed` increasing
 
-## Troubleshooting
+## Important Constraint
 
-- If no serial ACK appears:
-  - verify the selected serial port is the Pico W USB serial device
-  - reset Pico W and retry
-- If Wi-Fi fails:
-  - confirm SSID/password and 2.4 GHz support for your network
-- If stream is not reached:
-  - confirm Pico and host are on same LAN and port `80` is reachable
+Do not keep a separate REPL monitor attached while the app owns the serial port. That causes dropped/spotty ACK behavior.

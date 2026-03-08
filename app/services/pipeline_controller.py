@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -11,7 +10,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from app import serial_connect
-from app.config import MJPEG_PATH_CANDIDATES, SERIAL_ACK_TIMEOUT_S, STREAM_RETRY_DELAY_S, BYPASS_SERIAL
+from app.config import (
+    BYPASS_SERIAL,
+    MJPEG_PATH_CANDIDATES,
+    SERIAL_HANDSHAKE_ATTEMPTS,
+    SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S,
+    STREAM_RETRY_DELAY_S,
+)
 
 try:
     import pyautogui
@@ -69,17 +74,6 @@ class PipelineController:
                 self._processor = ContourPupilFrameProcessor()
             except Exception as exc:  # pragma: no cover - runtime dependency guard
                 self._processor_error = str(exc)
-
-    @staticmethod
-    def _extract_ip(text: str) -> Optional[str]:
-        match = re.search(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b", text)
-        if not match:
-            return None
-        candidate = match.group(1)
-        parts = candidate.split(".")
-        if all(0 <= int(part) <= 255 for part in parts):
-            return candidate
-        return None
 
     def _append_alert_locked(self, level: str, message: str) -> None:
         self._alert_id += 1
@@ -158,37 +152,22 @@ class PipelineController:
         if worker and worker.is_alive():
             worker.join(timeout=3.0)
 
-    def _wait_for_ack_and_ip(self, ser: Any, timeout_s: float) -> Tuple[bool, Optional[str]]:
-        # fake okay and return local IP for test stream
-
-        if BYPASS_SERIAL:
-            saw_ok = True
-            ip_addr = "127.0.0.1:5052"
-            return saw_ok, ip_addr
-        
-        deadline = time.monotonic() + max(0.1, timeout_s)
-        saw_ok = False
-        ip_addr: Optional[str] = None
-
-        while time.monotonic() < deadline and not self._stop_event.is_set():
-            raw = ser.readline()
-            if not raw:
-                continue
-            line = raw.decode("utf-8", errors="replace").strip()
-            if not line:
-                continue
-
-            if line.upper().startswith("OK"):
-                saw_ok = True
-
-            maybe_ip = self._extract_ip(line)
-            if maybe_ip:
-                ip_addr = maybe_ip
-
-            if saw_ok and ip_addr:
-                return True, ip_addr
-
-        return saw_ok, ip_addr
+    def _run_serial_handshake_attempt(
+        self,
+        ser: Any,
+        *,
+        ssid: str,
+        password: str,
+        timeout_s: float,
+    ) -> Tuple[bool, Optional[str], Optional[str], str]:
+        nonce = serial_connect.make_nonce()
+        serial_connect.send_wifi_config_command(ser, ssid, password, nonce)
+        saw_ack, ip_addr, device_error, _lines = serial_connect.read_handshake_signals(
+            ser,
+            expected_nonce=nonce,
+            timeout_s=timeout_s,
+        )
+        return saw_ack, ip_addr, device_error, nonce
 
     def _run_pipeline(self, *, ssid: str, password: str, serial_port: str, baud: int) -> None:
         try:
@@ -204,18 +183,62 @@ class PipelineController:
                 self._set_error_locked(str(exc))
 
     def _provision_wifi(self, *, ssid: str, password: str, serial_port: str, baud: int) -> str:
+        if BYPASS_SERIAL:
+            return "127.0.0.1:5052"
+
         with self._lock:
             self._state.phase = "provisioning"
             self._state.last_error = None
 
         with serial_connect.open_serial(serial_port, baud=baud) as ser:
-            serial_connect.send_wifi_credentials(ser, ssid, password)
-            saw_ok, ip_addr = self._wait_for_ack_and_ip(ser, timeout_s=SERIAL_ACK_TIMEOUT_S)
+            last_status = "no response"
+            for attempt in range(1, max(1, SERIAL_HANDSHAKE_ATTEMPTS) + 1):
+                if self._stop_event.is_set():
+                    raise RuntimeError("serial provisioning canceled")
 
-        if not saw_ok:
-            raise RuntimeError(f'ESP32 did not acknowledge credentials. ({serial_port} {ip_addr})')
-        if not ip_addr:
-            raise RuntimeError("ESP32 acknowledged but no IP address was received.")
+                try:
+                    ser.reset_input_buffer()
+                except Exception:
+                    pass
+
+                with self._lock:
+                    self._append_alert_locked(
+                        "info",
+                        f"Sending Wi-Fi config over serial (attempt {attempt}/{SERIAL_HANDSHAKE_ATTEMPTS})…",
+                    )
+
+                saw_ack, ip_addr, device_error, nonce = self._run_serial_handshake_attempt(
+                    ser,
+                    ssid=ssid,
+                    password=password,
+                    timeout_s=SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S,
+                )
+
+                if device_error:
+                    raise RuntimeError(f"ESP32 reported error: {device_error}")
+
+                if ip_addr:
+                    with self._lock:
+                        self._append_alert_locked(
+                            "info",
+                            f"Serial handshake complete (ack_seen={saw_ack}, nonce={nonce}).",
+                        )
+                    break
+
+                if saw_ack:
+                    last_status = "ACK seen but no OK <ip> yet"
+                else:
+                    last_status = "no ACK/OK seen"
+
+                with self._lock:
+                    self._append_alert_locked(
+                        "warning",
+                        f"No complete serial response ({last_status}). Retrying…",
+                    )
+            else:
+                raise RuntimeError(
+                    f"Failed serial provisioning after {SERIAL_HANDSHAKE_ATTEMPTS} attempts ({last_status})."
+                )
 
         with self._lock:
             self._state.phase = "wifi_connected"
@@ -343,7 +366,12 @@ class PipelineController:
             x = float(x)
             y = float(y)
 
-            pyautogui.moveRel(x, y)
+            
+            with self._lock:
+                self._append_alert_locked("info", f'Mouse Position: ({x}, {y})')
+
+
+            pyautogui.moveTo(x, y)
         except Exception as exc:
             with self._lock:
                 self._set_error_locked(f"Cursor update failed: {exc}")

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from dotenv import load_dotenv
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+except Exception:  # pragma: no cover - optional local dev dependency
+    def load_dotenv(*_args, **_kwargs):
+        return False
 
 load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
@@ -12,7 +17,8 @@ FLASK_HOST = os.getenv("EYE_FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.getenv("EYE_FLASK_PORT", "5051"))
 BYPASS_SERIAL = os.getenv("BYPASS_SERIAL", "false").lower() == "true"
 
-SERIAL_ACK_TIMEOUT_S = float(os.getenv("EYE_SERIAL_ACK_TIMEOUT_S", "20.0"))
+SERIAL_HANDSHAKE_ATTEMPTS = int(os.getenv("EYE_SERIAL_HANDSHAKE_ATTEMPTS", "3"))
+SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S = float(os.getenv("EYE_SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S", "6.0"))
 STREAM_RETRY_DELAY_S = float(os.getenv("EYE_STREAM_RETRY_DELAY_S", "2.0"))
 
 MJPEG_PATH_CANDIDATES = tuple(

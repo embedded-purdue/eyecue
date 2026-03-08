@@ -10,8 +10,12 @@
 ## Pipeline
 
 1. User submits SSID/password/serial port.
-2. Flask opens serial, sends `CFGW` payload to ESP32.
-3. Flask waits for `OK` + IP.
+2. Flask opens serial, sends line command:
+   - `WIFI_CONFIG {"ssid":"...","password":"...","nonce":"..."}`
+3. Flask waits for serial responses:
+   - `ACK WIFI_CONFIG <nonce>`
+   - `OK <ip>`
+   - `ERR <domain> <reason>`
 4. Flask closes serial and starts MJPEG pull from `http://<ip>/stream` (with fallback paths).
 5. Each MJPEG frame runs through `ContourPupilFrameProcessor`.
 6. Cursor movement is applied only when tracking toggle is enabled.

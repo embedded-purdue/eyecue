@@ -94,12 +94,24 @@ function startBackendProcess() {
     return;
   }
 
-  const projectRoot = path.resolve(__dirname, "..", "..");
-  const venvPython = path.join(projectRoot, "env", "bin", "python");
-  const pythonExec = fs.existsSync(venvPython) ? venvPython : "python3";
+  let pythonExec, spawnArgs, spawnCwd;
 
-  backendProcess = spawn(pythonExec, ["-m", "app.app"], {
-    cwd: projectRoot,
+  if (app.isPackaged) {
+    // Use the self-contained PyInstaller binary bundled in Resources/
+    pythonExec = path.join(process.resourcesPath, "eyecue-backend");
+    spawnArgs = [];
+    spawnCwd = process.resourcesPath;
+  } else {
+    // Development: run Flask via the venv Python
+    const projectRoot = path.resolve(__dirname, "..", "..");
+    const venvPython = path.join(projectRoot, "env", "bin", "python");
+    pythonExec = fs.existsSync(venvPython) ? venvPython : "python3";
+    spawnArgs = ["-m", "app.app"];
+    spawnCwd = projectRoot;
+  }
+
+  backendProcess = spawn(pythonExec, spawnArgs, {
+    cwd: spawnCwd,
     stdio: ["ignore", "pipe", "pipe"],
   });
   backendOwned = true;

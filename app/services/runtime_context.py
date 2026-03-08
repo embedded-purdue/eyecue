@@ -1,12 +1,8 @@
-"""Shared runtime singletons for routes."""
+"""Shared runtime singleton for routes."""
 
 from __future__ import annotations
 
-from app.services.agent_supervisor import AgentSupervisor
-from app.services.calibration_service import CalibrationService
-from app.services.runtime_store import RuntimeStore
+from app.services.pipeline_controller import PipelineController
 
 
-runtime_store = RuntimeStore()
-agent_supervisor = AgentSupervisor(runtime_store)
-calibration_service = CalibrationService(runtime_store)
+pipeline_controller = PipelineController()

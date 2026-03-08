@@ -301,3 +301,66 @@ h2 {
 .success-icon .eye-pupil {
   background: #34a853;
 }
+
+.toggle-row {
+  margin: 10px 0 20px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 14px;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #f8f8f8;
+}
+
+.toggle-row label {
+  font-weight: 500;
+}
+
+.toggle-row input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+
+.status-panel {
+  text-align: left;
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  background: #fff;
+  padding: 14px;
+}
+
+.status-row {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.status-log {
+  margin-top: 10px;
+  border-top: 1px solid #ececec;
+  padding-top: 10px;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.status-entry {
+  font-size: 13px;
+  margin-bottom: 6px;
+  padding: 8px;
+  border-radius: 6px;
+}
+
+.status-entry.info {
+  background: #e8f0fe;
+  color: #1a4da1;
+}
+
+.status-entry.warning {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.status-entry.error {
+  background: #f8d7da;
+  color: #721c24;
+}

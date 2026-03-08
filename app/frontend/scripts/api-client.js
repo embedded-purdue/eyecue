@@ -1,5 +1,5 @@
 (function initEyeApi() {
-  const API_BASE = 'http://127.0.0.1:5001';
+  const API_BASE = 'http://127.0.0.1:5051';
 
   async function request(path, options = {}) {
     const {
@@ -46,18 +46,10 @@
     request,
     health: () => request('/health'),
     bootstrap: () => request('/app/bootstrap'),
-    getRuntimeState: () => request('/runtime/state'),
-    startRuntime: (payload) => request('/runtime/start', { method: 'POST', body: payload }),
-    stopRuntime: () => request('/runtime/stop', { method: 'POST', body: {} }),
     listSerialPorts: () => request('/serial/ports'),
-    serialStatus: () => request('/serial/status'),
-    connectSerialCompat: (payload) => request('/serial/connect', { method: 'POST', body: payload }),
-    disconnectSerialCompat: () => request('/serial/disconnect', { method: 'POST', body: {} }),
-    getPrefs: () => request('/prefs'),
-    updatePrefs: (payload) => request('/prefs', { method: 'PUT', body: payload }),
-    startCalibrationSession: (payload) => request('/calibration/session/start', { method: 'POST', body: payload || {} }),
-    getCalibrationSession: () => request('/calibration/session'),
-    submitCalibrationNode: (payload) => request('/calibration/session/node', { method: 'POST', body: payload }),
-    completeCalibrationSession: (payload) => request('/calibration/session/complete', { method: 'POST', body: payload }),
+    getRuntimeState: () => request('/runtime/state'),
+    connectRuntime: (payload) => request('/runtime/connect', { method: 'POST', body: payload }),
+    setTracking: (enabled) => request('/runtime/tracking', { method: 'POST', body: { enabled: Boolean(enabled) } }),
+    stopRuntime: () => request('/runtime/stop', { method: 'POST', body: {} }),
   };
 })();

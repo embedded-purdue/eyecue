@@ -3,18 +3,21 @@
  * Owns Flask lifecycle for the desktop app.
  */
 
-const { app, BrowserWindow } = require('electron');
-const { spawn } = require('child_process');
-const http = require('http');
-const path = require('path');
+const { app, BrowserWindow } = require("electron");
+const { spawn } = require("child_process");
+const http = require("http");
+const path = require("path");
+const fs = require("fs");
 
-const BACKEND_HOST = '127.0.0.1';
-const BACKEND_PORT = 5001;
+const BACKEND_HOST = "127.0.0.1";
+const BACKEND_PORT = 5051;
 const BACKEND_BASE = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
 
 let mainWindow = null;
 let backendProcess = null;
 let backendOwned = false;
+let quitInProgress = false;
+let shutdownPromise = null;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -30,17 +33,17 @@ function httpRequestJson(method, endpoint, body) {
         path: endpoint,
         method,
         headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': payload ? Buffer.byteLength(payload) : 0,
+          "Content-Type": "application/json",
+          "Content-Length": payload ? Buffer.byteLength(payload) : 0,
         },
         timeout: 1200,
       },
       (res) => {
-        let data = '';
-        res.on('data', (chunk) => {
+        let data = "";
+        res.on("data", (chunk) => {
           data += chunk;
         });
-        res.on('end', () => {
+        res.on("end", () => {
           if (res.statusCode < 200 || res.statusCode >= 300) {
             reject(new Error(`HTTP ${res.statusCode}`));
             return;
@@ -51,13 +54,13 @@ function httpRequestJson(method, endpoint, body) {
             reject(err);
           }
         });
-      }
+      },
     );
 
-    req.on('timeout', () => {
-      req.destroy(new Error('request timeout'));
+    req.on("timeout", () => {
+      req.destroy(new Error("request timeout"));
     });
-    req.on('error', reject);
+    req.on("error", reject);
 
     if (payload) {
       req.write(payload);
@@ -68,7 +71,7 @@ function httpRequestJson(method, endpoint, body) {
 
 async function checkBackendHealth() {
   try {
-    const payload = await httpRequestJson('GET', '/health');
+    const payload = await httpRequestJson("GET", "/health");
     return Boolean(payload && payload.ok);
   } catch (err) {
     return false;
@@ -91,20 +94,35 @@ function startBackendProcess() {
     return;
   }
 
-  const projectRoot = path.resolve(__dirname, '..', '..');
-  backendProcess = spawn('python3', ['-m', 'app.app'], {
-    cwd: projectRoot,
-    stdio: ['ignore', 'pipe', 'pipe'],
+  let pythonExec, spawnArgs, spawnCwd;
+
+  if (app.isPackaged) {
+    // Use the self-contained PyInstaller binary bundled in Resources/
+    pythonExec = path.join(process.resourcesPath, "eyecue-backend");
+    spawnArgs = [];
+    spawnCwd = process.resourcesPath;
+  } else {
+    // Development: run Flask via the venv Python
+    const projectRoot = path.resolve(__dirname, "..", "..");
+    const venvPython = path.join(projectRoot, "env", "bin", "python");
+    pythonExec = fs.existsSync(venvPython) ? venvPython : "python3";
+    spawnArgs = ["-m", "app.app"];
+    spawnCwd = projectRoot;
+  }
+
+  backendProcess = spawn(pythonExec, spawnArgs, {
+    cwd: spawnCwd,
+    stdio: ["ignore", "pipe", "pipe"],
   });
   backendOwned = true;
 
-  backendProcess.stdout.on('data', (chunk) => {
+  backendProcess.stdout.on("data", (chunk) => {
     process.stdout.write(`[backend] ${chunk}`);
   });
-  backendProcess.stderr.on('data', (chunk) => {
+  backendProcess.stderr.on("data", (chunk) => {
     process.stderr.write(`[backend] ${chunk}`);
   });
-  backendProcess.on('exit', (code, signal) => {
+  backendProcess.on("exit", (code, signal) => {
     process.stdout.write(`[backend] exited code=${code} signal=${signal}\n`);
     backendProcess = null;
   });
@@ -134,34 +152,76 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
-      enableBlinkFeatures: 'WebBluetooth',
+      preload: path.join(__dirname, "preload.js"),
+      enableBlinkFeatures: "WebBluetooth",
     },
-    titleBarStyle: 'default',
-    title: 'EyeCue',
+    titleBarStyle: "default",
+    title: "EyeCue",
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'pages', 'welcome.html'));
+  mainWindow.loadFile(path.join(__dirname, "pages", "connect.html"));
 
-  if (process.argv.includes('--debug')) {
+  if (process.argv.includes("--debug")) {
     mainWindow.webContents.openDevTools();
   }
 
-  mainWindow.on('closed', () => {
+  mainWindow.on("closed", () => {
     mainWindow = null;
   });
 }
 
 async function shutdownBackend() {
-  try {
-    await httpRequestJson('POST', '/runtime/stop', {});
-  } catch (err) {
-    // Best-effort shutdown request.
+  if (shutdownPromise) {
+    return shutdownPromise;
   }
 
-  if (backendOwned && backendProcess && !backendProcess.killed) {
-    backendProcess.kill('SIGTERM');
-  }
+  shutdownPromise = (async () => {
+    try {
+      await httpRequestJson("POST", "/runtime/stop", {});
+    } catch (err) {
+      // Best-effort shutdown request.
+    }
+
+    if (backendOwned && backendProcess && !backendProcess.killed) {
+      backendProcess.kill("SIGTERM");
+      const exited = await waitForBackendExit(3000);
+      if (!exited && backendProcess && !backendProcess.killed) {
+        backendProcess.kill("SIGKILL");
+        await waitForBackendExit(1000);
+      }
+    }
+  })();
+
+  return shutdownPromise;
+}
+
+function waitForBackendExit(timeoutMs) {
+  return new Promise((resolve) => {
+    if (!backendProcess || backendProcess.killed) {
+      resolve(true);
+      return;
+    }
+
+    const proc = backendProcess;
+    const timer = setTimeout(() => {
+      cleanup();
+      resolve(false);
+    }, timeoutMs);
+
+    function onExit() {
+      cleanup();
+      resolve(true);
+    }
+
+    function cleanup() {
+      clearTimeout(timer);
+      if (proc) {
+        proc.removeListener("exit", onExit);
+      }
+    }
+
+    proc.once("exit", onExit);
+  });
 }
 
 app.whenReady().then(async () => {
@@ -173,19 +233,26 @@ app.whenReady().then(async () => {
 
   createWindow();
 
-  app.on('activate', () => {
+  app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
     }
   });
 });
 
-app.on('before-quit', () => {
-  shutdownBackend();
+app.on("before-quit", (event) => {
+  if (quitInProgress) {
+    return;
+  }
+  event.preventDefault();
+  quitInProgress = true;
+  shutdownBackend().finally(() => {
+    app.exit(0);
+  });
 });
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
     app.quit();
   }
 });

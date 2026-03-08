@@ -2,14 +2,17 @@
 app/serial_connect.py
 
 - Scan ports for added peripheral (ESP32)
-- Prompt for WiFi SSID + password (or read from env)
-- Connect via serial, send credentials, wait for OK
-- Then watch ESP32 logs for connection success.
+- Prompt for Wi-Fi SSID + password (or read from env)
+- Connect via serial and send line-based config command
+- Read line-based handshake responses (ACK / OK / ERR)
 
-Protocol (very small + robust):
-- PC -> ESP32: b"CFGW" + <u16 payload_len> + <UTF-8 JSON payload>
-- ESP32 -> PC: "OK\n" after parsing + starting WiFi.begin()
-- ESP32 prints status lines ("Connecting...", "Connected!", "IP address: ...")
+Protocol:
+- Host -> device:
+    WIFI_CONFIG {"ssid":"...","password":"...","nonce":"..."}\n
+- Device -> host:
+    ACK WIFI_CONFIG <nonce>
+    OK <ip>
+    ERR <domain> <reason>
 
 Env vars supported:
   EYE_WIFI_SSID
@@ -20,22 +23,27 @@ Env vars supported:
 from __future__ import annotations
 
 import os
-import sys
 import json
+import random
+import re
 import time
 import getpass
-from typing import Any, Optional, Tuple, List
+from typing import Any, Callable, Optional, Tuple, List
 
 try:
     import serial
+    from serial import Serial
     from serial.tools import list_ports
 except Exception:  # pragma: no cover - dependency availability
     serial = None
     list_ports = None
 
 
-MAGIC = b"CFGW"
 BAUD = 115200
+WIFI_CONFIG_PREFIX = "WIFI_CONFIG "
+DEFAULT_HANDSHAKE_ATTEMPTS = 3
+DEFAULT_HANDSHAKE_TIMEOUT_S = 6.0
+_IPV4_RE = re.compile(r"\b(\d{1,3}(?:\.\d{1,3}){3})\b")
 
 
 def list_serial_ports():
@@ -107,58 +115,103 @@ def open_serial(port: str, baud: int = BAUD, timeout: float = 0.5) -> Any:
     return ser
 
 
-def frame_payload(payload: bytes) -> bytes:
-    if len(payload) > 65535:
-        raise ValueError("Payload too large for u16 length.")
-    length = len(payload).to_bytes(2, byteorder="big", signed=False)
-    return MAGIC + length + payload
+def make_nonce() -> str:
+    return f"{int(time.time() * 1000)}-{random.randrange(1000, 9999)}"
 
 
-def send_wifi_credentials(ser: serial.Serial, ssid: str, password: str) -> None:
-    msg = {
-        "type": "wifi_config",
-        "ssid": ssid,
-        "password": password,
+def build_wifi_config_command(ssid: str, password: str, nonce: str) -> str:
+    payload = {
+        "ssid": str(ssid),
+        "password": str(password),
+        "nonce": str(nonce),
     }
-    payload = json.dumps(msg, separators=(",", ":")).encode("utf-8")
-    packet = frame_payload(payload)
-    ser.write(packet)
+    return WIFI_CONFIG_PREFIX + json.dumps(payload, separators=(",", ":"))
+
+
+def send_wifi_config_command(ser: Serial, ssid: str, password: str, nonce: str) -> str:
+    line = build_wifi_config_command(ssid=ssid, password=password, nonce=nonce)
+    ser.write((line + "\n").encode("utf-8"))
     ser.flush()
+    return line
 
 
-def read_lines_for(
-    ser: serial.Serial,
-    deadline_s: float,
+def extract_ipv4(text: str) -> Optional[str]:
+    match = _IPV4_RE.search(text or "")
+    if not match:
+        return None
+    candidate = match.group(1)
+    parts = candidate.split(".")
+    if all(0 <= int(part) <= 255 for part in parts):
+        return candidate
+    return None
+
+
+def parse_handshake_line(line: str) -> Tuple[str, Optional[str]]:
+    """Parse a serial line into one of: ack, ok, err, ignore."""
+    text = (line or "").strip()
+    if not text:
+        return "ignore", None
+
+    if text.startswith("ACK WIFI_CONFIG"):
+        parts = text.split()
+        nonce = parts[2] if len(parts) >= 3 else None
+        return "ack", nonce
+
+    if text.startswith("OK"):
+        ip_addr = extract_ipv4(text)
+        return "ok", ip_addr
+
+    if text.startswith("ERR "):
+        parts = text.split(" ", 2)
+        domain = parts[1] if len(parts) >= 2 else "UNKNOWN"
+        reason = parts[2] if len(parts) >= 3 else "unknown"
+        return "err", f"{domain} {reason}".strip()
+
+    return "ignore", text
+
+
+def read_handshake_signals(
+    ser: Serial,
     *,
-    want_ok: bool = True,
-) -> Tuple[bool, List[str]]:
-    """
-    Read text lines until deadline. Returns (saw_ok, lines).
-    We decode with 'replace' because ESP32 boot logs can have odd bytes.
-    """
-    end = time.time() + deadline_s
-    saw_ok = False
+    expected_nonce: Optional[str],
+    timeout_s: float,
+    line_logger: Optional[Callable[[str], None]] = None,
+) -> Tuple[bool, Optional[str], Optional[str], List[str]]:
+    """Read serial lines until timeout and parse ACK/OK/ERR signals."""
+    end = time.monotonic() + max(0.1, float(timeout_s))
+    saw_ack = False
+    ok_ip: Optional[str] = None
+    wifi_error: Optional[str] = None
     lines: List[str] = []
 
-    # Use readline() so we can parse "OK", "Connected!", etc.
-    while time.time() < end:
-        raw = ser.readline()  # reads until '\n' or timeout
+    while time.monotonic() < end:
+        raw = ser.readline()
         if not raw:
             continue
+
         line = raw.decode("utf-8", errors="replace").rstrip("\r\n")
-        if line:
-            lines.append(line)
-            print(line)
-
-            if want_ok and line.strip() == "OK":
-                saw_ok = True
-
-            # If your firmware prints these, we can stop early
-            if "Connected!" in line or "IP address:" in line:
-                # Keep collecting a bit more if you want, but we can return quickly.
+        if not line:
+            continue
+        lines.append(line)
+        if line_logger:
+            try:
+                line_logger(line)
+            except Exception:
                 pass
 
-    return saw_ok, lines
+        kind, value = parse_handshake_line(line)
+        if kind == "ack":
+            if expected_nonce is None or value == expected_nonce:
+                saw_ack = True
+        if kind == "ok":
+            if value:
+                ok_ip = value
+                return saw_ack, ok_ip, None, lines
+        elif kind == "err":
+            wifi_error = value or "unknown"
+            return saw_ack, None, wifi_error, lines
+
+    return saw_ack, ok_ip, wifi_error, lines
 
 
 def get_creds_from_user() -> Tuple[str, str]:
@@ -181,19 +234,29 @@ def main() -> int:
         ssid, password = get_creds_from_user()
 
         with open_serial(port) as ser:
-            print("Sending Wi-Fi credentials to ESP32...")
-            send_wifi_credentials(ser, ssid, password)
+            for attempt in range(1, DEFAULT_HANDSHAKE_ATTEMPTS + 1):
+                nonce = make_nonce()
+                print(f"Sending WIFI_CONFIG attempt={attempt}/{DEFAULT_HANDSHAKE_ATTEMPTS} nonce={nonce}")
+                send_wifi_config_command(ser, ssid, password, nonce)
+                saw_ack, ip_addr, wifi_error, lines = read_handshake_signals(
+                    ser,
+                    expected_nonce=nonce,
+                    timeout_s=DEFAULT_HANDSHAKE_TIMEOUT_S,
+                )
+                for line in lines:
+                    print(line)
 
-            print("Waiting for OK from ESP32 (ack)...")
-            saw_ok, _ = read_lines_for(ser, deadline_s=6.0, want_ok=True)
-            if not saw_ok:
-                print("Did not see OK. The ESP32 may not be running the serial-config firmware.")
-                print("Tip: confirm Arduino sketch reads the CFGW frame and prints 'OK'.")
-                return 2
+                if wifi_error:
+                    print(f"Device reported error: {wifi_error}")
+                    return 2
+                if ip_addr:
+                    print(f"Handshake complete. ACK seen={saw_ack} ip={ip_addr}")
+                    return 0
 
-            print("Ack received. Waiting for Wi-Fi connection logs...")
-            # Give it time to connect. Adjust to your environment.
-            read_lines_for(ser, deadline_s=20.0, want_ok=False)
+                print("No ACK/OK response in time; retrying...")
+
+            print("Failed to provision device after retries.")
+            return 2
 
         return 0
 

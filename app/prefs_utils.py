@@ -11,17 +11,9 @@ from typing import Any, Dict
 
 
 DEFAULT_PREFS: Dict[str, Any] = {
-    "has_onboarded": False,
     "wifi_ssid": "",
     "wifi_password": "",
     "last_serial_port": "",
-    "connection_method": "",
-    "horizontal_sensitivity": 50,
-    "vertical_sensitivity": 50,
-    "preference_1": "default",
-    "preference_2": "default",
-    "calibration_data": [],
-    "calibration_timestamp": None,
 }
 
 _LOCK = threading.Lock()

@@ -2,7 +2,8 @@
 
 ## Build
 
-`npx electron-forge make` packages a binary in `frontend/out/make`
+Running `npx electron-forge make` from `app/frontend` packages a binary in `frontend/out/make`.
+Alternatively, running `./build.sh` from the project root also works.
 
 ## Overview
 

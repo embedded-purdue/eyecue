@@ -2,6 +2,11 @@
 
 eyecue - eye-controlled cursor system for accessibility
 
+## setup
+
+Open the app and run `xattr -cr /path/to/eyecue-frontend.app` to remove the quarantine.
+Run `npx electron-forge make` to create a working binary in `app/frontend/out/make/zip/darwin/arm64`.
+
 ## overview
 
 real-time pupil detection and gaze tracking system using computer vision. designed for eye-controlled cursor movement and accessibility applications.

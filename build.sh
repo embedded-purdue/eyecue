@@ -28,9 +28,7 @@ fi
 echo "==> Backend binary ready: $DIST_BINARY"
 
 echo "==> Building Electron app with electron-forge..."
-cd "$FRONTEND_DIR"
-npm install --quiet
-npx electron-forge make
+cd "$FRONTEND_DIR" && npx electron-forge make
 
 echo ""
 echo "Done! Distributable is in app/frontend/out/make/"

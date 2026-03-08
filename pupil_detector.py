@@ -9,21 +9,31 @@ import numpy as np
 
 def detect_pupil_contour(frame):
     """pupil detection using darkest region with size filtering"""
-    
+
+    # DEBUG: Check frame validity
+    if frame is None:
+        print("[DEBUG] Frame is None!")
+        return None, None, None
+
+    print(f"[DEBUG] Frame shape: {frame.shape}, dtype: {frame.dtype}, min: {frame.min()}, max: {frame.max()}")
+
     # convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    print(f"[DEBUG] Gray shape: {gray.shape}, min: {gray.min()}, max: {gray.max()}")
     
     # crop roi ~ single eye area (smaller, more focused)
     h, w = gray.shape
     roi = gray[int(h*0.4):int(h*0.7), int(w*0.35):int(w*0.65)]
-    
+    print(f"[DEBUG] ROI shape: {roi.shape}")
+
     # apply slight blur to reduce noise
     blurred = cv2.GaussianBlur(roi, (3, 3), 0)
-    
+
     # use fixed threshold for darkest pixels (pupil is typically < 30% of max brightness)
     # this finds the darkest regions more reliably
     mean_intensity = np.mean(blurred)
     threshold_value = max(30, mean_intensity * 0.4)  # adaptive but conservative
+    print(f"[DEBUG] Mean intensity: {mean_intensity:.1f}, Threshold: {threshold_value:.1f}")
     _, thresh = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
     
     # morphological operations to clean up - remove small noise
@@ -33,8 +43,10 @@ def detect_pupil_contour(frame):
     
     # find contours
     contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    
+    print(f"[DEBUG] Found {len(contours)} contours")
+
     if not contours:
+        print("[DEBUG] No contours found - returning None")
         return None, None, None
     
     roi_h, roi_w = roi.shape
@@ -79,12 +91,16 @@ def detect_pupil_contour(frame):
             'area': area
         })
     
+    print(f"[DEBUG] After filtering: {len(candidates)} valid candidates")
+
     if not candidates:
+        print("[DEBUG] No valid candidates after filtering - returning None")
         return None, None, None
-    
+
     # sort by score and take the best one
     candidates.sort(key=lambda x: x['score'], reverse=True)
     best = candidates[0]
+    print(f"[DEBUG] Best candidate - score: {best['score']:.1f}, area: {best['area']:.0f}, intensity: {best['mean_intensity']:.1f}")
     
     # use moments for accurate center
     M = cv2.moments(best['contour'])
@@ -102,5 +118,8 @@ def detect_pupil_contour(frame):
     # convert to full frame coords
     full_cx = cx + int(w*0.35)
     full_cy = cy + int(h*0.4)
-    
+
+    print(f"[DEBUG] SUCCESS - Pupil detected at ({full_cx}, {full_cy})")
+    print("-" * 60)
+
     return (full_cx, full_cy), (cx, cy), (w_box, h_box)

@@ -7,7 +7,14 @@ Alternatively, running `./build.sh` from the project root also works.
 
 ## Testing
 
-Without an ESP32-3B-Box, run `app-tests/serve_webcam.py` first, then run `npm start` from `app/frontend`.
+Make sure you do not have Anaconda installed. Copy `.env.example` to a new `.env` file.
+If you are simulating a webcam, set `BYPASS_SERIAL` to `true`.
+
+Setup the virtual environment (venv) by running `python3 -m venv env` from the project root.
+Then, install all dependencies by running `pip install -r requirements.txt`.
+
+Resolve dependencies by running `source env/bin/activate` and start the webcam simulator
+with `python app-tests/serve_webcam.py`. Then, start the app with `cd app/frontend && npm start`.
 
 ## Overview
 

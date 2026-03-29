@@ -5,6 +5,7 @@ import numpy as np
 import time
 from collections import deque
 from pupil_detector import detect_pupil_contour
+from contour_gaze_tracker import ESP32CameraCapture
 
 class BlinkDetector:
     def __init__(self):
@@ -324,44 +325,83 @@ class BlinkDetector:
 
 
     def run(self, camera_index=0):
-        """main blink detection loop"""
-        cap = cv2.VideoCapture(camera_index)
-        if not cap.isOpened():
-            print(f"[error] could not open camera {camera_index}")
-            return
-        
-        # set camera properties for robust contour gaze tracking (FPS-independent)
-        # try to set resolution, but don't fail if camera doesn't support it
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # minimal buffer for real-time
-        # Note: FPS is not set to work with any camera FPS
-        
-        # verify camera is still working after setting properties
-        ret, test_frame = cap.read()
-        if not ret:
-            print("[warning] camera failed after setting properties, using default settings")
-            cap.release()
+        """main blink detection loop.
+        camera_index: int (webcam), path string (video file), or http:// URL for ESP32 stream
+        (same conventions as contour_gaze_tracker)."""
+        is_esp32_stream = isinstance(camera_index, str) and camera_index.startswith('http://')
+        esp32_capture = None
+        cap = None
+
+        if is_esp32_stream:
+            print(f"[info] connecting to ESP32 camera: {camera_index}")
+            esp32_capture = ESP32CameraCapture(camera_index)
+        else:
             cap = cv2.VideoCapture(camera_index)
             if not cap.isOpened():
-                print(f"[error] could not reopen camera {camera_index}")
+                print(f"[error] could not open camera/video: {camera_index}")
                 return
+            is_local = isinstance(camera_index, int)
+            if is_local:
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            ret, _ = cap.read()
+            if not ret:
+                print("[warning] camera failed after setting properties, using default settings")
+                cap.release()
+                cap = cv2.VideoCapture(camera_index)
+                if not cap.isOpened():
+                    print(f"[error] could not reopen camera {camera_index}")
+                    return
+            if is_local:
+                print("[info] local webcam - resolution hints applied")
+            else:
+                print(f"[info] processing video file: {camera_index}")
+
+        def read_frame():
+            if esp32_capture:
+                return esp32_capture.read()
+            return cap.read()
+
+        def release_capture():
+            if esp32_capture:
+                esp32_capture.release()
+            if cap:
+                cap.release()
+
+        ret, test_frame = read_frame()
+        if not ret or test_frame is None:
+            print("[error] could not read first frame")
+            release_capture()
+            return
 
         print("[info] starting FPS-independent blink detection...")
-        print(f"[info] camera: {int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))}x{int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))} @ {cap.get(cv2.CAP_PROP_FPS):.1f}fps")
+        th, tw = test_frame.shape[:2]
+        fps = cap.get(cv2.CAP_PROP_FPS) if cap is not None else 0.0
+        fps_s = f"{fps:.1f}fps" if fps and fps > 1e-3 else "unknown fps"
+        print(f"[info] camera: {tw}x{th} @ {fps_s}")
         
         # time-based output for FPS independence
         last_output_time = time.time()
         output_interval = 2.0  # output every 2 seconds regardless of FPS
         
         while True:
-            ret, frame = cap.read()
-            if not ret:
+            ret, frame = read_frame()
+            if not ret or frame is None:
                 print("[error] failed to read frame from camera")
                 print("[info] trying to reinitialize camera...")
-                cap.release()
-                cap = cv2.VideoCapture(camera_index)
-                if not cap.isOpened():
+                release_capture()
+                esp32_capture = None
+                cap = None
+                if is_esp32_stream:
+                    esp32_capture = ESP32CameraCapture(camera_index)
+                else:
+                    cap = cv2.VideoCapture(camera_index)
+                    if isinstance(camera_index, int):
+                        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                if esp32_capture is None and (cap is None or not cap.isOpened()):
                     print("[error] could not reopen camera")
                     break
                 continue
@@ -409,7 +449,7 @@ class BlinkDetector:
                 # reset focus area
                 self.reset_focus_area()
         
-        cap.release()
+        release_capture()
         cv2.destroyAllWindows()
         print("[info] blink detection stopped")
 
@@ -417,11 +457,20 @@ class BlinkDetector:
 def main():
     import argparse
     parser = argparse.ArgumentParser(description='contour-based blink detector')
-    parser.add_argument('--camera', type=int, default=0, help='camera index')
+    parser.add_argument(
+        '--camera',
+        type=str,
+        default='0',
+        help='camera index (int), video file path, or ESP32 stream URL (e.g. http://192.168.4.49/stream)',
+    )
     args = parser.parse_args()
-    
+    try:
+        camera_input = int(args.camera)
+    except ValueError:
+        camera_input = args.camera
+
     detector = BlinkDetector()
-    detector.run(camera_index=args.camera)
+    detector.run(camera_index=camera_input)
 
 if __name__ == "__main__":
     main()

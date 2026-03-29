@@ -1,0 +1,13 @@
+{
+  "runtime_seconds": 21.736185789108276,
+  "total_frames": 0,
+  "detection_rate": 0.0,
+  "recent_detection_rate": 0.0,
+  "fps": 0.0,
+  "avg_detection_time_ms": 0.0,
+  "position_jitter_px": 0.0,
+  "position_variance": [
+    0.0,
+    0.0
+  ]
+}

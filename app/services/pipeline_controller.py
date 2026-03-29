@@ -306,7 +306,7 @@ class PipelineController:
             for path in path_candidates:
                 if self._stop_event.is_set():
                     return
-                candidate_path = path if path.startswith("/") else f"/{path}"
+                candidate_path = path # used to append / for saftey
                 stream_url = f"{base_url}{candidate_path}"
                 try:
                     with requests.get(stream_url, stream=True, timeout=(3.0, 5.0)) as response:

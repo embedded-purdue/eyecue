@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue - Connect</title>
+  <link rel="stylesheet" href="../styles/main.css">
+</head>
+<body>
+  <div class="container">
+    <div class="page-title">
+      <div class="title-icon">
+        <div class="title-icon-pupil"></div>
+      </div>
+      <h2>Cue Connect</h2>
+    </div>
+
+    <form id="connectForm">
+      <div class="form-group">
+        <label for="networkName">Network Name</label>
+        <input type="text" id="networkName" name="networkName" required>
+      </div>
+
+      <div class="form-group">
+        <label for="networkPassword">Network Password</label>
+        <input type="password" id="networkPassword" name="networkPassword" required>
+      </div>
+
+      <div class="form-group">
+        <label for="serialPort">Serial Port</label>
+        <select id="serialPort" name="serialPort" required>
+          <option value="">Loading ports...</option>
+        </select>
+      </div>
+
+      <button type="submit" class="btn btn-primary">Connect</button>
+    </form>
+
+    <div class="toggle-row">
+      <label for="trackingToggle">Enable Cursor Tracking</label>
+      <input type="checkbox" id="trackingToggle">
+    </div>
+
+    <div class="status-panel">
+      <div class="status-row" id="phaseText">Phase: idle</div>
+      <div class="status-row" id="framesText">Frames Processed: 0</div>
+      <div class="status-log" id="statusLog"></div>
+    </div>
+  </div>
+
+  <script src="../scripts/api-client.js"></script>
+  <script src="../scripts/connect.js"></script>
+</body>
+</html>

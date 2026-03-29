@@ -1,32 +1,22 @@
-from flask import Blueprint
-from flask import request, jsonify
+from __future__ import annotations
 
-serial_bp = Blueprint('serial', __name__, url_prefix='/serial')
+from flask import Blueprint, jsonify
 
-@serial_bp.route('/connect', methods=["POST"])
-def connect():
-
-    if request.method == 'POST':
-        ssid = request.form.get('ssid')
-        password = request.form.get('password')
-
-    # resp, err = serial_connect(ssid, password)
-    resp, err = (None, None)
-    if resp != 200:
-        return jsonify({"message": err})
-    
-        
-    return jsonify({"message": "ok"}), 200
+from app import serial_connect
 
 
-@serial_bp.route('/status', methods=["GET"])
-def status():
+serial_bp = Blueprint("serial", __name__, url_prefix="/serial")
 
 
-    # resp, err = serial_read()
-    resp, err = (None, None)
-    if resp != 200:
-        return jsonify({"message": err})
-    
-        
-    return jsonify({"message": "ok"}), 200
+@serial_bp.route("/ports", methods=["GET"])
+def ports() -> tuple:
+    ports = serial_connect.list_serial_ports()
+    payload = [
+        {
+            "device": getattr(port, "device", ""),
+            "description": getattr(port, "description", ""),
+            "hwid": getattr(port, "hwid", ""),
+        }
+        for port in ports
+    ]
+    return jsonify({"ok": True, "data": payload}), 200

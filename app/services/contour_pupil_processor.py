@@ -9,6 +9,7 @@ import cv2
 import numpy as np
 
 from pupil_detector import detect_pupil_contour
+# ToDo : import gaze tracker and run the pupil contour output into it
 
 try:
     import pyautogui

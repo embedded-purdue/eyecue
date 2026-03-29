@@ -1,9 +1,13 @@
-# EyeCue Flask Backend (Minimal Prototype)
+# EyeCue Flask Backend
 
 ## Build
 
 Running `npx electron-forge make` from `app/frontend` packages a binary in `frontend/out/make`.
 Alternatively, running `./build.sh` from the project root also works.
+
+## Testing
+
+Without an ESP32-3B-Box, run `app-tests/serve_webcam.py` first, then run `npm start` from `app/frontend`.
 
 ## Overview
 

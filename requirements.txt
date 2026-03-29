@@ -11,3 +11,4 @@ pyserial==3.5
 requests==2.32.3
 werkzeug==3.1.5
 zipp==3.23.0
+opencv-python==4.10.0.84

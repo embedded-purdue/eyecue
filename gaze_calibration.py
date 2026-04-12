@@ -158,11 +158,32 @@ def run_nine_point_calibration(
     root.title("Contour gaze — 9-point calibration")
     root.attributes("-fullscreen", True)
     root.configure(bg="black")
-    canvas = tk.Canvas(root, bg="black", highlightthickness=0)
+    canvas = tk.Canvas(root, bg="black", highlightthickness=0, highlightbackground="black", takefocus=True)
     canvas.pack(fill=tk.BOTH, expand=True)
 
     preview_win = "Calibration — camera"
     cv2_named = False
+
+    def bring_calibration_to_front() -> None:
+        """OpenCV steals focus on Windows; put the calibration layer back on top and give it keyboard focus."""
+        root.lift()
+        root.attributes("-topmost", True)
+        root.update_idletasks()
+        root.focus_force()
+        canvas.focus_set()
+        root.after(250, lambda: root.attributes("-topmost", False))
+
+    def event_is_space(event: Any) -> bool:
+        if event.keysym in ("space", "Space"):
+            return True
+        if getattr(event, "char", None) == " ":
+            return True
+        try:
+            if int(event.keycode) == 32:
+                return True
+        except (TypeError, ValueError):
+            pass
+        return False
 
     def read_frame():
         if esp32_capture is not None:
@@ -185,7 +206,7 @@ def run_nine_point_calibration(
     collected_sx: List[float] = []
     collected_sy: List[float] = []
 
-    state = {"idx": 0, "done": False, "error": None}
+    state: Dict[str, Any] = {"idx": 0, "done": False, "error": None, "busy": False}
 
     def draw_target(i: int) -> None:
         canvas.delete("all")
@@ -196,18 +217,33 @@ def run_nine_point_calibration(
         canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill="red", outline="white", width=2)
         canvas.create_text(
             screen_w // 2,
-            40,
-            text=f"Look at dot {i + 1} / 9 — press SPACE to capture",
+            36,
+            text=f"Point {i + 1} / 9 — look at the red dot",
             fill="white",
             font=("Arial", 18),
         )
         canvas.create_text(
             screen_w // 2,
-            80,
+            72,
+            text="Press SPACE to record ~1 s of samples (camera window may pop up)",
+            fill="white",
+            font=("Arial", 14),
+        )
+        canvas.create_text(
+            screen_w // 2,
+            102,
+            text="If SPACE does nothing: click this black screen once, then press SPACE",
+            fill="#aaaaaa",
+            font=("Arial", 12),
+        )
+        canvas.create_text(
+            screen_w // 2,
+            132,
             text="ESC to cancel",
             fill="#888888",
             font=("Arial", 12),
         )
+        bring_calibration_to_front()
         root.update()
 
     def collect_one_point(i: int) -> Tuple[float, float]:
@@ -225,6 +261,7 @@ def run_nine_point_calibration(
             ret, frame = read_frame()
             if not ret or frame is None:
                 time.sleep(0.01)
+                root.update()
                 continue
             frame = preprocess(frame)
             pupil_center, roi_center, _bbox = detect_pupil_contour(frame)
@@ -240,9 +277,11 @@ def run_nine_point_calibration(
                 )
                 cv2.imshow(preview_win, frame)
                 cv2.waitKey(1)
+                root.update()
                 continue
             gaze = tracker.extract_gaze_numbers(pupil_center, roi_center, frame.shape)
             if not gaze:
+                root.update()
                 continue
             ox, oy = gaze["single_offset"]
             buf_x.append(float(ox))
@@ -259,44 +298,63 @@ def run_nine_point_calibration(
             )
             cv2.imshow(preview_win, frame)
             cv2.waitKey(1)
+            root.update()
             if len(buf_x) >= samples_per_point:
                 break
         if len(buf_x) < min_needed:
+            try:
+                cv2.destroyWindow(preview_win)
+            except Exception:
+                pass
+            cv2_named = False
+            bring_calibration_to_front()
             raise RuntimeError(f"too few gaze samples at point {i + 1} ({len(buf_x)}); try again")
+        try:
+            cv2.destroyWindow(preview_win)
+        except Exception:
+            pass
+        cv2_named = False
+        bring_calibration_to_front()
         return float(np.median(buf_x)), float(np.median(buf_y))
 
     def on_key(event) -> None:
-        if state["done"]:
+        if state["done"] or state["busy"]:
             return
         if event.keysym == "Escape":
             state["error"] = "cancelled"
             state["done"] = True
             root.quit()
             return
-        if event.keysym != "space":
+        if not event_is_space(event):
             return
-        i = state["idx"]
+        state["busy"] = True
         try:
-            fx, fy = collect_one_point(i)
-        except Exception as ex:
-            state["error"] = str(ex)
-            state["done"] = True
-            root.quit()
-            return
-        nx, ny = NINE_POINT_GRID[i]
-        collected_fx.append(fx)
-        collected_fy.append(fy)
-        collected_sx.append(float(nx * screen_w))
-        collected_sy.append(float(ny * screen_h))
-        print(f"[cal] point {i + 1}/9: offset=({fx:.4f}, {fy:.4f}) -> screen=({collected_sx[-1]:.0f}, {collected_sy[-1]:.0f})")
-        if i + 1 >= len(NINE_POINT_GRID):
-            state["done"] = True
-            root.quit()
-            return
-        state["idx"] = i + 1
-        draw_target(state["idx"])
+            i = state["idx"]
+            try:
+                fx, fy = collect_one_point(i)
+            except Exception as ex:
+                state["error"] = str(ex)
+                state["done"] = True
+                root.quit()
+                return
+            nx, ny = NINE_POINT_GRID[i]
+            collected_fx.append(fx)
+            collected_fy.append(fy)
+            collected_sx.append(float(nx * screen_w))
+            collected_sy.append(float(ny * screen_h))
+            print(
+                f"[cal] point {i + 1}/9: offset=({fx:.4f}, {fy:.4f}) -> screen=({collected_sx[-1]:.0f}, {collected_sy[-1]:.0f})"
+            )
+            if i + 1 >= len(NINE_POINT_GRID):
+                state["done"] = True
+                root.quit()
+                return
+            state["idx"] = i + 1
+            draw_target(state["idx"])
+        finally:
+            state["busy"] = False
 
-    root.bind("<Key>", on_key)
+    canvas.bind("<Key>", on_key)
     draw_target(0)
     root.mainloop()
     root.destroy()

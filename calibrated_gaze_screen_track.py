@@ -8,8 +8,9 @@ Pipeline
 2. ``ContourGazeTracker.extract_gaze_numbers`` → unit **gaze vector**, angles, ROI-normalized
    ``single_offset`` (f_x, f_y), and (if calibration JSON is loaded) **screen_px** / **screen_norm**
    from ``ContourGazeCalibrator`` quadratic fit on (f_x, f_y).
-3. Optional: rescale **screen_px** from calibration-time resolution to current monitor size, then
-   ``CursorController.move_to_screen_pixels`` for live cursor feedback.
+3. Rescale **screen_px** from calibration-time resolution to current monitor size, then
+   ``CursorController.move_to_screen_pixels`` (instant jump; PyAutoGUI fail-safe is turned off so
+   corner targets do not abort the run).
 
 Requires ``contour_gaze_calibration.json`` from ``contour_gaze_tracker.py --calibrate-only`` (or
 ``--calibrate``), using the same camera framing (e.g. same webcam zoom) as calibration.

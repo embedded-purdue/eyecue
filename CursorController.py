@@ -48,6 +48,9 @@ import pyautogui
 import math
 import numpy as np
 
+# Calibrated gaze can map to any pixel, including corners; PyAutoGUI's fail-safe aborts on corner hits.
+_gaze_pixel_failsafe_disabled = False
+
 
 class CursorController:
 
@@ -100,12 +103,20 @@ class CursorController:
         
         pyautogui.moveTo(x, y, duration=1.0/self.frameRate)
 
-    def move_to_screen_pixels(self, x, y):
-        """Move cursor using precomputed monitor pixels (e.g. from ContourGazeTracker 9-point calibration)."""
+    def move_to_screen_pixels(self, x, y, *, duration=0):
+        """Move cursor using precomputed monitor pixels (e.g. from ContourGazeTracker 9-point calibration).
+
+        Disables PyAutoGUI fail-safe for this process: corner targets are valid for gaze, but would
+        otherwise raise FailSafeException. ``duration`` is seconds for ``moveTo`` (0 = jump each frame).
+        """
+        global _gaze_pixel_failsafe_disabled
+        if not _gaze_pixel_failsafe_disabled:
+            pyautogui.FAILSAFE = False
+            _gaze_pixel_failsafe_disabled = True
         w, h = self.screenWidth, self.screenHeight
         xi = max(0, min(w - 1, int(round(float(x)))))
         yi = max(0, min(h - 1, int(round(float(y)))))
-        pyautogui.moveTo(xi, yi, duration=1.0 / self.frameRate)
+        pyautogui.moveTo(xi, yi, duration=float(duration))
 
 
 # control = CursorController(0, 56.8, 16.3, -16.3, 0, 0)

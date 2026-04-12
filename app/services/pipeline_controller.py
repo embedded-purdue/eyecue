@@ -27,6 +27,9 @@ try:
 except Exception:  # pragma: no cover - optional runtime dependency
     pyautogui = None
 
+# Calibrated gaze can target corners; PyAutoGUI fail-safe would abort there.
+_pyautogui_gaze_failsafe_off = False
+
 try:
     from app.services.contour_pupil_processor import ContourPupilFrameProcessor
 except Exception:  # pragma: no cover - optional runtime dependency
@@ -397,10 +400,15 @@ class PipelineController:
             self._apply_cursor(cursor)
 
     def _apply_cursor(self, cursor: Dict[str, int | float]) -> None:
+        global _pyautogui_gaze_failsafe_off
         if pyautogui is None:
             with self._lock:
                 self._set_error_locked("pyautogui is unavailable for cursor movement.")
             return
+
+        if not _pyautogui_gaze_failsafe_off:
+            pyautogui.FAILSAFE = False
+            _pyautogui_gaze_failsafe_off = True
 
         try:
             x = cursor.get("x")

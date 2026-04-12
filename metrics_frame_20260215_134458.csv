@@ -1,0 +1,10 @@
+Metric,Value
+runtime_seconds,32.119300365448
+total_frames,398
+detection_rate,0.9974874371859297
+recent_detection_rate,1.0
+fps,30.20288618043272
+avg_detection_time_ms,3.0053138732910156
+position_jitter_px,15.242218968445435
+position_variance,"2790.5155555555557,417.9955555555555"
+gaze_stability_deg_per_frame,3.8918493893784656

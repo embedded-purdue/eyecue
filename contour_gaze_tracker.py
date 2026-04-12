@@ -10,9 +10,9 @@ import numpy as np
 import math
 import time
 import requests
-from io import BytesIO
 from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
+from gaze_calibration import ContourGazeCalibrator, run_nine_point_calibration
 
 class ESP32CameraCapture:
     """helper class to capture frames from esp32 camera"""
@@ -88,10 +88,23 @@ class ESP32CameraCapture:
             self.cap = None
 
 class ContourGazeTracker:
-    def __init__(self, output_video=None, enable_metrics=True, metrics_save_interval=100):
+    def __init__(
+        self,
+        output_video=None,
+        enable_metrics=True,
+        metrics_save_interval=100,
+        calibration_path=None,
+    ):
         self.frame_count = 0
         self.esp32_capture = None
         self.is_local_camera = False
+        self.gaze_calibrator = ContourGazeCalibrator()
+        if calibration_path:
+            try:
+                self.gaze_calibrator.load(calibration_path)
+                print(f"[info] loaded gaze calibration: {calibration_path}")
+            except Exception as exc:
+                print(f"[warning] could not load calibration ({calibration_path}): {exc}")
         # stabilization: smoothed pupil position
         self.smoothed_pupil_center = None
         self.smoothing_alpha = 0.3  # lower = more smoothing (0.0-1.0)
@@ -148,11 +161,51 @@ class ContourGazeTracker:
         theta_v = math.degrees(math.atan2(gaze_vector[1], gaze_vector[2]))
         
         # single eye tracking - no fake left/right data
-        return {
+        out = {
             'single_gaze_vector': gaze_vector.tolist(),
             'single_angles': [theta_h, theta_v],
-            'single_offset': [offset_x, offset_y]
+            'single_offset': [offset_x, offset_y],
         }
+        if self.gaze_calibrator.is_fitted:
+            sx, sy = self.gaze_calibrator.map_offset_to_screen(offset_x, offset_y)
+            sw = max(1, self.gaze_calibrator.screen_width)
+            sh = max(1, self.gaze_calibrator.screen_height)
+            out['screen_px'] = [sx, sy]
+            out['screen_norm'] = [sx / sw, sy / sh]
+        return out
+
+    def run_calibration_interactive(self, camera_index=0, save_path="contour_gaze_calibration.json"):
+        """9-point fullscreen calibration; saves JSON and stores fit on ``gaze_calibrator``."""
+        is_esp32_stream = isinstance(camera_index, str) and camera_index.startswith('http://')
+        esp32_capture = None
+        cap = None
+        is_local_camera = False
+        try:
+            if is_esp32_stream:
+                print(f"[info] calibration: ESP32 camera {camera_index}")
+                esp32_capture = ESP32CameraCapture(camera_index)
+            else:
+                cap = cv2.VideoCapture(camera_index)
+                if not cap.isOpened():
+                    print(f"[error] could not open camera/video for calibration: {camera_index}")
+                    return
+                is_local_camera = isinstance(camera_index, int)
+                if is_local_camera:
+                    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                    cap.set(cv2.CAP_PROP_FPS, 30)
+            self.gaze_calibrator = run_nine_point_calibration(
+                self,
+                cap=cap,
+                esp32_capture=esp32_capture,
+                is_local_camera=is_local_camera,
+                save_path=save_path,
+            )
+        finally:
+            if esp32_capture is not None:
+                esp32_capture.release()
+            if cap is not None:
+                cap.release()
 
     def run(self, camera_index=0):
         """main tracking loop"""
@@ -261,6 +314,7 @@ class ContourGazeTracker:
                 self.metrics.record_frame(stable_pupil_center, detection_time, gaze_angles)
             
             # extract gaze data using stabilized position
+            gaze_data = None
             if stable_pupil_center is not None:
                 gaze_data = self.extract_gaze_numbers(stable_pupil_center, roi_center, frame.shape)
                 
@@ -270,12 +324,26 @@ class ContourGazeTracker:
                     print(f"Single Eye Gaze Vector: {gaze_data['single_gaze_vector']}")
                     print(f"Single Eye Angles: H={gaze_data['single_angles'][0]:.1f}°, V={gaze_data['single_angles'][1]:.1f}°")
                     print(f"Single Eye Offset: {gaze_data['single_offset']}")
+                    if gaze_data.get('screen_px') is not None:
+                        print(f"Calibrated screen (px): {gaze_data['screen_px']}  norm: {gaze_data.get('screen_norm')}")
                     
                     # print metrics summary every 30 frames
                     if self.enable_metrics and self.metrics:
                         print(f"Detection Rate: {self.metrics.get_recent_detection_rate():.1%} | "
                               f"FPS: {self.metrics.get_fps():.1f} | "
                               f"Jitter: {self.metrics.get_position_jitter():.2f}px")
+                if gaze_data and gaze_data.get('screen_px') is not None:
+                    spx, spy = gaze_data['screen_px']
+                    _fh = frame.shape[0]
+                    cv2.putText(
+                        frame,
+                        f"cal screen: ({spx}, {spy})",
+                        (10, _fh - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.55,
+                        (255, 200, 0),
+                        2,
+                    )
             
             # draw pupil detection (use stabilized position)
             if stable_pupil_center:
@@ -369,6 +437,12 @@ def main():
                        help='disable metrics collection')
     parser.add_argument('--metrics-interval', type=int, default=100,
                        help='interval for auto-saving metrics (frames)')
+    parser.add_argument('--calibrate', action='store_true',
+                       help='run 9-point screen calibration (Tk fullscreen + camera preview), then continue tracking')
+    parser.add_argument('--calibrate-only', action='store_true',
+                       help='run 9-point calibration and exit (no tracking loop)')
+    parser.add_argument('--calibration', type=str, default=None,
+                       help='path to calibration JSON (load at start; default save path when used with --calibrate)')
     args = parser.parse_args()
     
     # convert to int if it's a number, otherwise keep as string (video file path or url)
@@ -377,11 +451,18 @@ def main():
     except ValueError:
         camera_input = args.camera
     
+    cal_path = args.calibration
     tracker = ContourGazeTracker(
         output_video=args.output,
         enable_metrics=not args.no_metrics,
-        metrics_save_interval=args.metrics_interval
+        metrics_save_interval=args.metrics_interval,
+        calibration_path=cal_path,
     )
+    if args.calibrate or args.calibrate_only:
+        save_as = cal_path or 'contour_gaze_calibration.json'
+        tracker.run_calibration_interactive(camera_input, save_path=save_as)
+    if args.calibrate_only:
+        return
     tracker.run(camera_index=camera_input)
 
 if __name__ == '__main__':

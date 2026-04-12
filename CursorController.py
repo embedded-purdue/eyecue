@@ -99,7 +99,13 @@ class CursorController:
         y = (unitVector[2] * scaleFactor) + (self.screenHeight/2)
         
         pyautogui.moveTo(x, y, duration=1.0/self.frameRate)
-        
+
+    def move_to_screen_pixels(self, x, y):
+        """Move cursor using precomputed monitor pixels (e.g. from ContourGazeTracker 9-point calibration)."""
+        w, h = self.screenWidth, self.screenHeight
+        xi = max(0, min(w - 1, int(round(float(x)))))
+        yi = max(0, min(h - 1, int(round(float(y)))))
+        pyautogui.moveTo(xi, yi, duration=1.0 / self.frameRate)
 
 
 # control = CursorController(0, 56.8, 16.3, -16.3, 0, 0)

@@ -32,3 +32,7 @@ MJPEG_PATH_CANDIDATES = tuple(
     .split(",")
     if part.strip()
 )
+
+# Optional JSON from contour_gaze_tracker 9-point calibration (ContourGazeCalibrator.save).
+_gaze_cal = os.getenv("EYE_GAZE_CALIBRATION", "").strip()
+GAZE_CALIBRATION_PATH = _gaze_cal if _gaze_cal else None

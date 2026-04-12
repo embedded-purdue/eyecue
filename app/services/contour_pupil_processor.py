@@ -9,7 +9,6 @@ import cv2
 import numpy as np
 
 from pupil_detector import detect_pupil_contour
-# ToDo : import gaze tracker and run the pupil contour output into it
 
 try:
     import pyautogui
@@ -39,12 +38,32 @@ class ContourPupilFrameProcessor:
         self,
         *,
         screen_size_provider: Optional[Callable[[], Tuple[int, int]]] = None,
+        calibration_path: Optional[str] = None,
     ) -> None:
         self._screen_size_provider = screen_size_provider or self._default_screen_size_provider
         self._lock = threading.RLock()
         self._last_cursor_x = 0
         self._last_cursor_y = 0
         self._has_last_cursor = False
+        self._calibration_path_requested = calibration_path
+        self._gaze_tracker = None
+        self._gaze_calibration_load_error: Optional[str] = None
+        if calibration_path:
+            try:
+                from contour_gaze_tracker import ContourGazeTracker
+
+                self._gaze_tracker = ContourGazeTracker(
+                    enable_metrics=False,
+                    calibration_path=calibration_path,
+                )
+                if not self._gaze_tracker.gaze_calibrator.is_fitted:
+                    self._gaze_tracker = None
+                    self._gaze_calibration_load_error = (
+                        f"calibration not fitted (missing or invalid JSON): {calibration_path}"
+                    )
+            except Exception as exc:
+                self._gaze_tracker = None
+                self._gaze_calibration_load_error = str(exc)
 
     @staticmethod
     def _default_screen_size_provider() -> Tuple[int, int]:
@@ -96,6 +115,27 @@ class ContourPupilFrameProcessor:
         y = max(0, min(screen_h - 1, y))
         return x, y
 
+    @staticmethod
+    def _rescale_calibrated_px(
+        sx: int,
+        sy: int,
+        screen_width: int,
+        screen_height: int,
+        cal_width: int,
+        cal_height: int,
+    ) -> Tuple[int, int]:
+        """Map pixels from calibration resolution to current logical screen size."""
+        cw = max(1, int(cal_width))
+        ch = max(1, int(cal_height))
+        sw = max(1, int(screen_width))
+        sh = max(1, int(screen_height))
+        # Single path: when sw==cw and sh==ch this is identity scale but still int-rounds and clamps.
+        nx = int(round(float(sx) * sw / cw))
+        ny = int(round(float(sy) * sh / ch))
+        nx = max(0, min(sw - 1, nx))
+        ny = max(0, min(sh - 1, ny))
+        return nx, ny
+
     def _remember_cursor(self, x: int, y: int) -> None:
         with self._lock:
             self._last_cursor_x = int(x)
@@ -132,6 +172,7 @@ class ContourPupilFrameProcessor:
                     "used_fallback": True,
                     "screen_width": screen_width,
                     "screen_height": screen_height,
+                    "gaze_mapping": "none",
                 },
                 "error": None,
             }
@@ -172,24 +213,58 @@ class ContourPupilFrameProcessor:
             "frame_width": frame_width,
             "frame_height": frame_height,
         }
+        if self._calibration_path_requested:
+            diagnostics["calibration_path"] = self._calibration_path_requested
+        if self._gaze_calibration_load_error:
+            diagnostics["calibration_warning"] = self._gaze_calibration_load_error
 
         if has_detection:
             x_frame = int(full_center[0])
             y_frame = int(full_center[1])
-            cursor_x, cursor_y = self._map_to_screen(
-                x_frame=x_frame,
-                y_frame=y_frame,
-                frame_width=frame_width,
-                frame_height=frame_height,
-                screen_width=screen_width,
-                screen_height=screen_height,
-            )
-            self._remember_cursor(cursor_x, cursor_y)
+            gaze_mapping = "linear_frame"
+            cursor_x: int
+            cursor_y: int
 
+            if self._gaze_tracker is not None:
+                gaze = self._gaze_tracker.extract_gaze_numbers(full_center, None, frame.shape)
+                if gaze and gaze.get("screen_px") is not None:
+                    spx, spy = int(gaze["screen_px"][0]), int(gaze["screen_px"][1])
+                    cal = self._gaze_tracker.gaze_calibrator
+                    cursor_x, cursor_y = self._rescale_calibrated_px(
+                        spx,
+                        spy,
+                        screen_width,
+                        screen_height,
+                        cal.screen_width,
+                        cal.screen_height,
+                    )
+                    gaze_mapping = "calibrated_quadratic"
+                    diagnostics["single_offset"] = gaze.get("single_offset")
+                else:
+                    cursor_x, cursor_y = self._map_to_screen(
+                        x_frame=x_frame,
+                        y_frame=y_frame,
+                        frame_width=frame_width,
+                        frame_height=frame_height,
+                        screen_width=screen_width,
+                        screen_height=screen_height,
+                    )
+            else:
+                cursor_x, cursor_y = self._map_to_screen(
+                    x_frame=x_frame,
+                    y_frame=y_frame,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    screen_width=screen_width,
+                    screen_height=screen_height,
+                )
+
+            self._remember_cursor(cursor_x, cursor_y)
             diagnostics.update(
                 {
                     "reason": "detected",
                     "used_fallback": False,
+                    "gaze_mapping": gaze_mapping,
                     "pupil_center": {"x": x_frame, "y": y_frame},
                 }
             )
@@ -208,7 +283,7 @@ class ContourPupilFrameProcessor:
             screen_height=screen_height,
             reason_prefix="no_detection",
         )
-        diagnostics.update({"reason": reason, "used_fallback": True})
+        diagnostics.update({"reason": reason, "used_fallback": True, "gaze_mapping": "none"})
 
         return {
             "ok": True,

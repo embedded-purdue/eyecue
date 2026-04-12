@@ -12,6 +12,7 @@ import requests
 from app import serial_connect
 from app.config import (
     BYPASS_SERIAL,
+    GAZE_CALIBRATION_PATH,
     MJPEG_PATH_CANDIDATES,
     SERIAL_ACK_RETRIES,
     SERIAL_ACK_TIMEOUT_S,
@@ -74,7 +75,7 @@ class PipelineController:
             self._processor_error = "contour processor unavailable"
         else:
             try:
-                self._processor = ContourPupilFrameProcessor()
+                self._processor = ContourPupilFrameProcessor(calibration_path=GAZE_CALIBRATION_PATH)
             except Exception as exc:  # pragma: no cover - runtime dependency guard
                 self._processor_error = str(exc)
 

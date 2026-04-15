@@ -10,9 +10,113 @@ import numpy as np
 import math
 import time
 import requests
-from io import BytesIO
+from typing import Dict, Optional, Sequence, Tuple, Union
 from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
+
+
+def extract_contour_gaze_data(
+    pupil_center: Optional[Sequence[Union[int, float]]],
+    frame_shape: Sequence[int],
+) -> Optional[Dict[str, list]]:
+    """Convert pupil center to contour gaze vector/angles."""
+    if pupil_center is None:
+        return None
+
+    if not frame_shape or len(frame_shape) < 2:
+        return None
+
+    pupil_x, pupil_y = pupil_center
+    h = int(frame_shape[0])
+    w = int(frame_shape[1])
+    if h <= 0 or w <= 0:
+        return None
+
+    roi_width = int(w * 0.6)
+    roi_height = int(h * 0.5)
+    if roi_width <= 0 or roi_height <= 0:
+        return None
+
+    roi_center_x = int(w * 0.2) + roi_width // 2
+    roi_center_y = int(h * 0.3) + roi_height // 2
+
+    deviation_x = float(pupil_x) - roi_center_x
+    deviation_y = float(pupil_y) - roi_center_y
+
+    offset_x = deviation_x / roi_width
+    offset_y = -deviation_y / roi_height
+
+    eye_radius = 12.0
+    x_3d = offset_x * eye_radius
+    y_3d = offset_y * eye_radius
+    z_3d = math.sqrt(max(0.0, eye_radius**2 - x_3d**2 - y_3d**2))
+    gaze_vector = np.array([x_3d, y_3d, z_3d], dtype=np.float64)
+    gaze_norm = np.linalg.norm(gaze_vector)
+    if gaze_norm <= 0:
+        return None
+    gaze_vector = gaze_vector / gaze_norm
+
+    theta_h = math.degrees(math.atan2(gaze_vector[0], gaze_vector[2]))
+    theta_v = math.degrees(math.atan2(gaze_vector[1], gaze_vector[2]))
+
+    return {
+        "single_gaze_vector": gaze_vector.tolist(),
+        "single_angles": [theta_h, theta_v],
+        "single_offset": [offset_x, offset_y],
+    }
+
+
+def map_gaze_angles_to_screen(
+    angle_h: float,
+    angle_v: float,
+    screen_width: int,
+    screen_height: int,
+    *,
+    screen_distance_pixels: Optional[float] = None,
+    eye_center_h: float = 0.0,
+    eye_center_v: float = 0.0,
+    gyro_h: float = 0.0,
+    gyro_v: float = 0.0,
+    gyro_center_h: float = 0.0,
+    gyro_center_v: float = 0.0,
+) -> Tuple[int, int]:
+    """Map gaze angles to screen coordinates using CursorController geometry."""
+    width = max(1, int(screen_width))
+    height = max(1, int(screen_height))
+
+    if screen_distance_pixels is None:
+        screen_distance_pixels = width / (2 * math.tan(math.radians(30)))
+
+    angle_h_rad = math.radians(float(angle_h))
+    angle_v_rad = -math.radians(float(angle_v))
+
+    angle_h_rad -= math.radians(float(eye_center_h))
+    angle_v_rad += math.radians(float(eye_center_v))
+
+    angle_h_rad += math.radians(float(gyro_h) - float(gyro_center_h))
+    angle_v_rad += math.radians(float(gyro_v) - float(gyro_center_v))
+
+    unit_vector = np.array(
+        [
+            math.sin(angle_h_rad) * math.cos(angle_v_rad),
+            math.cos(angle_h_rad) * math.cos(angle_v_rad),
+            math.sin(angle_v_rad),
+        ],
+        dtype=np.float64,
+    )
+
+    if abs(unit_vector[1]) < 1e-6:
+        unit_vector[1] = 1e-6 if unit_vector[1] >= 0 else -1e-6
+
+    scale_factor = float(screen_distance_pixels) / unit_vector[1]
+
+    x = (unit_vector[0] * scale_factor) + (width / 2)
+    y = (unit_vector[2] * scale_factor) + (height / 2)
+
+    x = max(0, min(width - 1, x))
+    y = max(0, min(height - 1, y))
+    return int(x), int(y)
+
 
 class ESP32CameraCapture:
     """helper class to capture frames from esp32 camera"""
@@ -111,48 +215,8 @@ class ContourGazeTracker:
 
     def extract_gaze_numbers(self, pupil_center, roi_center, frame_shape):
         """extract 3d gaze vectors and angles - same format as mediapipe version"""
-        
-        if pupil_center is None:
-            return None
-        
-        # get pupil coords
-        pupil_x, pupil_y = pupil_center
-        
-        # calc exact roi center (middle of roi) - roi_center parameter is not used
-        h, w = frame_shape[:2]
-        roi_width = int(w * 0.6)  # roi width
-        roi_height = int(h * 0.5)  # roi height
-        roi_center_x = int(w * 0.2) + roi_width // 2  # exact center of roi
-        roi_center_y = int(h * 0.3) + roi_height // 2  # exact center of roi
-        
-        # calc deviation from roi center (in pixels)
-        deviation_x = pupil_x - roi_center_x
-        deviation_y = pupil_y - roi_center_y
-        
-        # normalize by roi dimensions - simple x-y plane
-        offset_x = deviation_x / roi_width
-        offset_y = -deviation_y / roi_height  # flip y so top = positive
-        
-        # convert to 3d gaze vectors (assuming 12mm eye radius)
-        eye_radius = 12.0
-        
-        # single eye 3d vector
-        x_3d = offset_x * eye_radius
-        y_3d = offset_y * eye_radius
-        z_3d = math.sqrt(max(0, eye_radius**2 - x_3d**2 - y_3d**2))
-        gaze_vector = np.array([x_3d, y_3d, z_3d])
-        gaze_vector = gaze_vector / np.linalg.norm(gaze_vector)
-        
-        # calc angles (in degrees)
-        theta_h = math.degrees(math.atan2(gaze_vector[0], gaze_vector[2]))
-        theta_v = math.degrees(math.atan2(gaze_vector[1], gaze_vector[2]))
-        
-        # single eye tracking - no fake left/right data
-        return {
-            'single_gaze_vector': gaze_vector.tolist(),
-            'single_angles': [theta_h, theta_v],
-            'single_offset': [offset_x, offset_y]
-        }
+        _ = roi_center  # ROI center is intentionally ignored in contour implementation.
+        return extract_contour_gaze_data(pupil_center, frame_shape)
 
     def run(self, camera_index=0):
         """main tracking loop"""

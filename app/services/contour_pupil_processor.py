@@ -8,8 +8,8 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
+from contour_gaze_tracker import extract_contour_gaze_data, map_gaze_angles_to_screen
 from pupil_detector import detect_pupil_contour
-# ToDo : import gaze tracker and run the pupil contour output into it
 
 try:
     import pyautogui
@@ -176,23 +176,74 @@ class ContourPupilFrameProcessor:
         if has_detection:
             x_frame = int(full_center[0])
             y_frame = int(full_center[1])
-            cursor_x, cursor_y = self._map_to_screen(
-                x_frame=x_frame,
-                y_frame=y_frame,
-                frame_width=frame_width,
-                frame_height=frame_height,
-                screen_width=screen_width,
-                screen_height=screen_height,
-            )
+            cursor_x: Optional[int] = None
+            cursor_y: Optional[int] = None
+            gaze_data: Optional[Dict[str, Any]] = None
+            gaze_error: Optional[str] = None
+
+            try:
+                gaze_data = extract_contour_gaze_data((x_frame, y_frame), frame.shape)
+                if not gaze_data:
+                    gaze_error = "gaze_data_unavailable"
+                else:
+                    single_angles = gaze_data.get("single_angles")
+                    if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
+                        cursor_x, cursor_y = map_gaze_angles_to_screen(
+                            angle_h=float(single_angles[0]),
+                            angle_v=float(single_angles[1]),
+                            screen_width=screen_width,
+                            screen_height=screen_height,
+                        )
+                    else:
+                        gaze_error = "gaze_angles_unavailable"
+            except Exception as exc:  # pragma: no cover - runtime guard
+                gaze_error = f"gaze_exception: {exc}"
+
+            if cursor_x is None or cursor_y is None:
+                cursor_x, cursor_y = self._map_to_screen(
+                    x_frame=x_frame,
+                    y_frame=y_frame,
+                    frame_width=frame_width,
+                    frame_height=frame_height,
+                    screen_width=screen_width,
+                    screen_height=screen_height,
+                )
+                diagnostics["mapping_source"] = "frame_linear_fallback"
+                diagnostics["reason"] = (
+                    "detected_linear_fallback_gaze_unavailable"
+                    if gaze_error in ("gaze_data_unavailable", "gaze_angles_unavailable")
+                    else "detected_linear_fallback_gaze_error"
+                )
+                diagnostics["used_fallback"] = True
+                if gaze_error:
+                    diagnostics["gaze_error"] = gaze_error
+            else:
+                diagnostics["mapping_source"] = "gaze_angles_cursorcontroller"
+                diagnostics["reason"] = "detected_gaze_mapped"
+                diagnostics["used_fallback"] = False
+
             self._remember_cursor(cursor_x, cursor_y)
 
             diagnostics.update(
                 {
-                    "reason": "detected",
-                    "used_fallback": False,
                     "pupil_center": {"x": x_frame, "y": y_frame},
                 }
             )
+            if isinstance(gaze_data, dict):
+                single_angles = gaze_data.get("single_angles")
+                single_offset = gaze_data.get("single_offset")
+                single_gaze_vector = gaze_data.get("single_gaze_vector")
+                if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
+                    diagnostics["single_angles"] = [float(single_angles[0]), float(single_angles[1])]
+                if isinstance(single_offset, (list, tuple)) and len(single_offset) >= 2:
+                    diagnostics["single_offset"] = [float(single_offset[0]), float(single_offset[1])]
+                if isinstance(single_gaze_vector, (list, tuple)) and len(single_gaze_vector) >= 3:
+                    diagnostics["single_gaze_vector"] = [
+                        float(single_gaze_vector[0]),
+                        float(single_gaze_vector[1]),
+                        float(single_gaze_vector[2]),
+                    ]
+
             if isinstance(bbox, tuple) and len(bbox) >= 2:
                 diagnostics["bbox"] = {"w": int(bbox[0]), "h": int(bbox[1])}
 

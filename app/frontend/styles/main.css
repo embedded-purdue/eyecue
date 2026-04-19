@@ -10,7 +10,14 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-  background-color: rgba(225, 236, 248, 0.9);
+  position: relative;
+  overflow-x: hidden;
+  background-color: #dbe8f3;
+  background-image: url("../assets/liquid-glass-background.png");
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  background-attachment: fixed;
   color: #22344d;
   display: flex;
   flex-direction: column;
@@ -20,19 +27,57 @@ body {
   padding: 36px 20px;
 }
 
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: rgba(236, 245, 255, 0.28);
+  backdrop-filter: blur(2px) saturate(112%);
+  -webkit-backdrop-filter: blur(2px) saturate(112%);
+  pointer-events: none;
+  z-index: -1;
+}
+
 .container {
   max-width: 500px;
   width: 100%;
+  position: relative;
   text-align: center;
-  background: rgba(255, 255, 255, 0.42);
-  border: 1px solid rgba(255, 255, 255, 0.72);
-  border-radius: 18px;
-  backdrop-filter: blur(14px) saturate(128%);
-  -webkit-backdrop-filter: blur(14px) saturate(128%);
+  background: rgba(246, 251, 255, 0.34);
+  border: 1px solid rgba(255, 255, 255, 0.84);
+  border-radius: 24px;
+  backdrop-filter: blur(24px) saturate(166%);
+  -webkit-backdrop-filter: blur(24px) saturate(166%);
   box-shadow:
-    0 18px 34px rgba(26, 66, 119, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.62);
-  padding: 28px 24px;
+    0 24px 48px rgba(18, 54, 96, 0.18),
+    0 8px 18px rgba(45, 104, 170, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95),
+    inset 0 -1px 0 rgba(160, 198, 236, 0.25);
+  padding: 28px 24px 24px;
+}
+
+.container::before {
+  content: "";
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  top: 10px;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.78);
+  border-radius: 999px;
+}
+
+.container::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  width: 92px;
+  height: 20px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.48);
+  filter: blur(8px);
+  pointer-events: none;
 }
 
 h1 {
@@ -76,10 +121,11 @@ h2 {
   font-size: 16px;
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.42);
+  background: rgba(255, 255, 255, 0.31);
   box-shadow:
-    0 7px 16px rgba(34, 78, 136, 0.1),
-    inset 0 1px 0 rgba(255, 255, 255, 0.65);
+    0 10px 18px rgba(31, 84, 143, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    inset 0 -1px 0 rgba(151, 191, 231, 0.2);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   color: #1f3b64;
 }
@@ -89,8 +135,9 @@ h2 {
   outline: none;
   border-color: rgba(96, 174, 255, 0.9);
   box-shadow:
-    0 0 0 3px rgba(96, 174, 255, 0.22),
-    0 9px 18px rgba(36, 84, 145, 0.16);
+    0 0 0 3px rgba(96, 174, 255, 0.26),
+    0 12px 22px rgba(36, 84, 145, 0.19),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
   transform: translateY(-1px);
 }
 
@@ -100,40 +147,41 @@ h2 {
   padding: 14px 24px;
   font-size: 16px;
   font-weight: 600;
-  border: 1px solid transparent;
-  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.66);
+  border-radius: 16px;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   margin-bottom: 15px;
 }
 
 .btn-primary {
-  background: rgba(72, 146, 230, 0.9);
+  background: rgba(76, 153, 236, 0.74);
   color: #f8fcff;
   box-shadow:
-    0 12px 24px rgba(36, 94, 165, 0.27),
-    inset 0 1px 0 rgba(255, 255, 255, 0.33);
+    0 14px 24px rgba(36, 94, 165, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.54),
+    inset 0 -1px 0 rgba(26, 90, 161, 0.24);
 }
 
 .btn-primary:hover {
   transform: translateY(-1px);
   box-shadow:
-    0 16px 24px rgba(36, 94, 165, 0.32),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    0 18px 28px rgba(36, 94, 165, 0.34),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.46);
+  background: rgba(255, 255, 255, 0.34);
   border-color: rgba(255, 255, 255, 0.56);
   color: #285d9f;
   box-shadow:
-    0 8px 20px rgba(39, 86, 144, 0.14),
-    inset 0 1px 0 rgba(255, 255, 255, 0.66);
+    0 10px 20px rgba(39, 86, 144, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
 }
 
 .btn-secondary:hover {
   transform: translateY(-1px);
-  background: rgba(255, 255, 255, 0.62);
+  background: rgba(255, 255, 255, 0.47);
 }
 
 .btn:disabled {
@@ -243,7 +291,7 @@ h2 {
   width: 92px;
   height: 92px;
   object-fit: contain;
-  filter: drop-shadow(0 4px 10px rgba(24, 51, 87, 0.22));
+  filter: drop-shadow(0 8px 16px rgba(24, 63, 108, 0.22));
 }
 
 .toggle-row {
@@ -254,8 +302,10 @@ h2 {
   padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.38);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  background: rgba(255, 255, 255, 0.29);
+  box-shadow:
+    0 8px 18px rgba(37, 93, 157, 0.13),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78);
 }
 
 .toggle-row label {
@@ -271,11 +321,13 @@ h2 {
 .status-panel {
   text-align: left;
   border: 1px solid rgba(255, 255, 255, 0.62);
-  border-radius: 12px;
-  background: rgba(255, 255, 255, 0.34);
-  backdrop-filter: blur(10px) saturate(122%);
-  -webkit-backdrop-filter: blur(10px) saturate(122%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  box-shadow:
+    0 12px 26px rgba(34, 84, 146, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.76);
   padding: 14px;
   min-height: 160px;
 }
@@ -284,6 +336,22 @@ h2 {
   font-size: 14px;
   margin-bottom: 6px;
   color: #2a466b;
+}
+
+#pairingTitle {
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+#pairingHint {
+  margin-top: 8px;
+  color: #476384;
+  font-size: 13px;
+}
+
+.pairing-panel {
+  min-height: 120px;
 }
 
 .status-log {
@@ -298,22 +366,22 @@ h2 {
   font-size: 13px;
   margin-bottom: 6px;
   padding: 8px;
-  border-radius: 6px;
+  border-radius: 10px;
   word-break: break-word;
 }
 
 .status-entry.info {
-  background: rgba(224, 239, 255, 0.74);
+  background: rgba(224, 239, 255, 0.56);
   color: #1f4e92;
 }
 
 .status-entry.warning {
-  background: rgba(255, 243, 213, 0.8);
+  background: rgba(255, 243, 213, 0.62);
   color: #6f5517;
 }
 
 .status-entry.error {
-  background: rgba(253, 219, 221, 0.82);
+  background: rgba(253, 219, 221, 0.62);
   color: #6f1f27;
 }
 
@@ -356,7 +424,7 @@ h2 {
 
   .container {
     padding: 18px 14px;
-    border-radius: 12px;
+    border-radius: 18px;
   }
 
   .page-title {

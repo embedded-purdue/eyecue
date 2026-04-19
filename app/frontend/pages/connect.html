@@ -40,6 +40,18 @@
       </form>
     </div>
 
+    <div id="pairingScreen" class="screen-hidden">
+      <div class="status-panel pairing-panel">
+        <div class="status-row" id="pairingTitle">Pairing In Progress</div>
+        <div class="status-row" id="pairingPhaseText">Phase: waiting</div>
+        <div class="status-row" id="pairingHint">Please keep this screen open while connection is established.</div>
+      </div>
+
+      <div class="runtime-actions">
+        <button type="button" id="cancelPairingButton" class="btn btn-secondary">Cancel Pairing</button>
+      </div>
+    </div>
+
     <div id="runtimeScreen" class="screen-hidden">
       <div class="toggle-row">
         <label for="trackingToggle">Enable Cursor Tracking</label>
@@ -54,7 +66,7 @@
       </div>
 
       <div class="runtime-actions">
-        <button type="button" id="backButton" class="btn btn-secondary">Back</button>
+        <button type="button" id="backButton" class="btn btn-secondary">Back To Connect</button>
         <button type="button" id="stopButton" class="btn btn-primary">Stop Runtime</button>
       </div>
     </div>

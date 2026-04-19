@@ -134,3 +134,135 @@ def detect_pupil_contour(frame):
     print("-" * 60)
 
     return (full_cx, full_cy), (cx, cy), (w_box, h_box)
+
+
+def detect_pupil_contour_candidates(frame):
+    """
+    pupil detection that returns ALL scored candidates (sorted best-to-worst)
+    plus the roi offset so callers can draw contours in full-frame coords.
+
+    returns dict with keys:
+        pupil_center  - (x, y) in full-frame coords or None
+        roi_center    - (x, y) in roi-local coords or None
+        bbox          - (w, h) of best contour or None
+        candidates    - list of dicts sorted by score descending, each with:
+                        contour, score, mean_intensity, area
+        roi_offset_x  - x offset to convert roi coords → frame coords
+        roi_offset_y  - y offset to convert roi coords → frame coords
+    """
+    empty = {
+        'pupil_center': None,
+        'roi_center': None,
+        'bbox': None,
+        'candidates': [],
+        'roi_offset_x': 0,
+        'roi_offset_y': 0,
+    }
+
+    if frame is None:
+        return empty
+
+    # convert to grayscale
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # crop roi ~ single eye area (same region as detect_pupil_contour)
+    h, w = gray.shape
+    roi_offset_x = int(w * 0.35)
+    roi_offset_y = int(h * 0.4)
+    roi = gray[int(h * 0.4):int(h * 0.7), int(w * 0.35):int(w * 0.65)]
+
+    # apply slight blur to reduce noise
+    blurred = cv2.GaussianBlur(roi, (3, 3), 0)
+
+    # adaptive threshold based on image brightness
+    mean_val = np.mean(blurred)
+    min_val = np.min(blurred)
+
+    if min_val > 80:
+        threshold_value = mean_val * 0.65
+    else:
+        threshold_value = max(30, mean_val * 0.4)
+
+    _, thresh = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
+
+    # morphological operations to clean up
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
+
+    # find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    if not contours:
+        empty['roi_offset_x'] = roi_offset_x
+        empty['roi_offset_y'] = roi_offset_y
+        return empty
+
+    roi_h, roi_w = roi.shape
+    roi_area = roi_h * roi_w
+
+    # filter and score contours
+    candidates = []
+    for contour in contours:
+        area = cv2.contourArea(contour)
+
+        # size filter
+        if area < 20 or area > roi_area * 0.25:
+            continue
+
+        x, y, w_box, h_box = cv2.boundingRect(contour)
+        aspect_ratio = float(w_box) / h_box if h_box > 0 else 0
+
+        if aspect_ratio < 0.5 or aspect_ratio > 2.0:
+            continue
+
+        mask = np.zeros(roi.shape, dtype=np.uint8)
+        cv2.drawContours(mask, [contour], -1, 255, -1)
+        mean_intensity = cv2.mean(blurred, mask=mask)[0]
+
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            continue
+        circularity = 4 * np.pi * area / (perimeter * perimeter)
+
+        score = (255 - mean_intensity) * 0.7 + circularity * 50 * 0.3
+
+        candidates.append({
+            'contour': contour,
+            'score': score,
+            'mean_intensity': mean_intensity,
+            'area': area,
+        })
+
+    candidates.sort(key=lambda x: x['score'], reverse=True)
+
+    result = {
+        'candidates': candidates,
+        'roi_offset_x': roi_offset_x,
+        'roi_offset_y': roi_offset_y,
+        'pupil_center': None,
+        'roi_center': None,
+        'bbox': None,
+    }
+
+    if candidates:
+        best = candidates[0]
+        M = cv2.moments(best['contour'])
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+        else:
+            x, y, w_box, h_box = cv2.boundingRect(best['contour'])
+            cx = x + w_box // 2
+            cy = y + h_box // 2
+
+        x, y, w_box, h_box = cv2.boundingRect(best['contour'])
+
+        full_cx = cx + roi_offset_x
+        full_cy = cy + roi_offset_y
+
+        result['pupil_center'] = (full_cx, full_cy)
+        result['roi_center'] = (cx, cy)
+        result['bbox'] = (w_box, h_box)
+
+    return result

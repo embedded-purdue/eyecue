@@ -44,10 +44,17 @@ cd app/frontend
 npm run start:desktop
 ```
 
-Developer fallback (only if backend binary is missing):
+Developer backend command (used by default in `start:desktop`):
 
 ```bash
 python3 -m app.app
+```
+
+Optional binary path for desktop startup:
+
+```bash
+cd app/frontend
+npm run start:desktop:binary
 ```
 
 Server default:

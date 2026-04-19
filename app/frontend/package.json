@@ -4,9 +4,11 @@
   "description": "EyeCue Electron Frontend",
   "main": "main.js",
   "scripts": {
-    "backend:build": "cd ../.. && bash build_backend.sh",
+    "backend:build": "node scripts/ensure-backend-build.js",
+    "backend:build:force": "cd ../.. && bash build_backend.sh",
     "start": "npx electron-forge start",
-    "start:desktop": "npm run backend:build && npx electron-forge start",
+    "start:desktop": "npx electron-forge start",
+    "start:desktop:binary": "npm run backend:build && npx electron-forge start",
     "dev": "npx electron . --debug",
     "package": "npm run backend:build && npx electron-forge package",
     "make": "npm run backend:build && npx electron-forge make"

@@ -30,10 +30,11 @@ function resolveBackendLaunch() {
   }
 
   const projectRoot = path.resolve(__dirname, "..", "..");
+  const devMode = String(process.env.EYECUE_DEV_BACKEND_MODE || "python").toLowerCase();
   const overrideBinary = process.env.EYECUE_BACKEND_BINARY;
   const distBinary = path.join(projectRoot, "dist", "eyecue-backend");
 
-  if (overrideBinary && fs.existsSync(overrideBinary)) {
+  if (devMode === "binary" && overrideBinary && fs.existsSync(overrideBinary)) {
     return {
       exec: overrideBinary,
       args: [],
@@ -42,7 +43,7 @@ function resolveBackendLaunch() {
     };
   }
 
-  if (fs.existsSync(distBinary)) {
+  if (devMode === "binary" && fs.existsSync(distBinary)) {
     return {
       exec: distBinary,
       args: [],
@@ -280,14 +281,12 @@ function waitForBackendExit(timeoutMs) {
   });
 }
 
-app.whenReady().then(async () => {
-  try {
-    await ensureBackend();
-  } catch (err) {
-    process.stderr.write(`${String(err)}\n`);
-  }
-
+app.whenReady().then(() => {
   createWindow();
+
+  ensureBackend().catch((err) => {
+    process.stderr.write(`${String(err)}\n`);
+  });
 
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) {

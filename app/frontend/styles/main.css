@@ -24,7 +24,38 @@ body {
   align-items: center;
   justify-content: flex-start;
   min-height: 100vh;
-  padding: 36px 20px;
+  padding: 68px 20px 36px;
+}
+
+.window-drag-bar {
+  position: fixed;
+  top: 10px;
+  left: 14px;
+  right: 14px;
+  height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 14px;
+  background: rgba(246, 251, 255, 0.16);
+  backdrop-filter: blur(20px) saturate(170%);
+  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  box-shadow:
+    0 8px 20px rgba(20, 56, 98, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-app-region: drag;
+  user-select: none;
+  z-index: 20;
+}
+
+.window-drag-title {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(27, 62, 103, 0.84);
+  font-weight: 700;
+  -webkit-app-region: drag;
 }
 
 body::before {
@@ -503,6 +534,15 @@ h2 {
   z-index: 3;
 }
 
+button,
+input,
+select,
+textarea,
+label,
+a {
+  -webkit-app-region: no-drag;
+}
+
 .runtime-actions {
   margin-top: 14px;
   display: grid;
@@ -516,7 +556,15 @@ h2 {
 
 @media (max-width: 640px) {
   body {
-    padding: 14px;
+    padding: 58px 14px 14px;
+  }
+
+  .window-drag-bar {
+    left: 10px;
+    right: 10px;
+    top: 8px;
+    height: 38px;
+    border-radius: 12px;
   }
 
   .debug-panel {

@@ -18,8 +18,8 @@ npm install
 npm run start:desktop
 ```
 
-`start:desktop` builds the PyInstaller backend binary and starts Electron.
-The app then launches the backend binary directly (no Python launcher in normal desktop flow).
+`start:desktop` starts Electron immediately and runs the live Python backend in development.
+Use `npm run start:desktop:binary` when you explicitly want the PyInstaller backend path.
 
 This will launch the eyecue app. To build the app, see the instructions below.
 

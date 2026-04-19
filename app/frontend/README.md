@@ -11,8 +11,9 @@ Single-page Electron UI for the prototype pipeline.
 
 ## Runtime Model
 
-- Electron starts the bundled backend binary (`dist/eyecue-backend` in dev, `Resources/eyecue-backend` when packaged).
-- If no backend binary is available, Electron falls back to `python3 -m app.app` for development.
+- In development, Electron starts the Python backend (`env/bin/python -m app.app` when available).
+- In packaged builds, Electron starts the bundled backend binary (`Resources/eyecue-backend`).
+- You can opt into binary testing in development with `npm run start:desktop:binary`.
 - Renderer calls Flask APIs at `http://127.0.0.1:5051`.
 - Renderer polls `/runtime/state` for live status and alerts.
 

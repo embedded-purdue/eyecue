@@ -26,7 +26,7 @@ cd app/frontend
 npm run start:desktop
 ```
 
-`start:desktop` builds `dist/eyecue-backend` and starts Electron.
+`start:desktop` starts Electron immediately and runs the live Python backend in development.
 
 ## 2. Connect Screen
 

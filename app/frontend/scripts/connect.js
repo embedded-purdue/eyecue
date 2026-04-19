@@ -9,6 +9,11 @@ const stateEls = {
   pairingPhase: document.getElementById("pairingPhaseText"),
   phase: document.getElementById("phaseText"),
   bypass: document.getElementById("bypassText"),
+  ssid: document.getElementById("ssidText"),
+  serial: document.getElementById("serialText"),
+  ip: document.getElementById("ipText"),
+  stream: document.getElementById("streamText"),
+  error: document.getElementById("errorText"),
   frames: document.getElementById("framesText"),
   log: document.getElementById("statusLog"),
 };
@@ -16,6 +21,7 @@ const stateEls = {
 let pollingTimer = null;
 let renderedAlertId = 0;
 let lastPollErrorMessage = "";
+let bootstrapLoaded = false;
 
 function initInteractiveGlass() {
   const container = document.querySelector(".container");
@@ -291,6 +297,21 @@ function renderRuntime(runtime) {
   if (stateEls.bypass) {
     stateEls.bypass.textContent = `Bypass Mode: ${bypassEnabled ? "on" : "off"}`;
   }
+  if (stateEls.ssid) {
+    stateEls.ssid.textContent = `Network: ${runtime.ssid || "--"}`;
+  }
+  if (stateEls.serial) {
+    stateEls.serial.textContent = `Serial Port: ${runtime.serial_port || "--"}`;
+  }
+  if (stateEls.ip) {
+    stateEls.ip.textContent = `ESP32 IP: ${runtime.esp32_ip || "--"}`;
+  }
+  if (stateEls.stream) {
+    stateEls.stream.textContent = `Stream URL: ${runtime.stream_url || "--"}`;
+  }
+  if (stateEls.error) {
+    stateEls.error.textContent = `Last Error: ${runtime.last_error || "none"}`;
+  }
   stateEls.frames.textContent = `Frames Processed: ${runtime.frames_processed || 0}`;
 
   const alerts = runtime.alerts || [];
@@ -302,6 +323,15 @@ function renderRuntime(runtime) {
 }
 
 async function refreshRuntime() {
+  if (!bootstrapLoaded) {
+    try {
+      await loadBootstrap();
+      return;
+    } catch (_err) {
+      // backend may still be launching; poll loop will retry
+    }
+  }
+
   try {
     const runtime = await window.eyeApi.getRuntimeState();
     lastPollErrorMessage = "";
@@ -344,6 +374,7 @@ async function loadBootstrap() {
 
   const phase = (data.runtime && data.runtime.phase) || "idle";
   setScreen(phaseToScreen(phase));
+  bootstrapLoaded = true;
 }
 
 document

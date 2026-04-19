@@ -23,8 +23,9 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
         with patch(
             "app.services.contour_pupil_processor.detect_pupil_contour",
             return_value=((100, 50), (0, 0), (12, 10)),
-        ), patch(
-            "app.services.contour_pupil_processor.extract_contour_gaze_data",
+        ), patch.object(
+            processor._gaze_tracker,
+            "extract_gaze_numbers",
             return_value={
                 "single_gaze_vector": [0.1, 0.2, 0.9],
                 "single_angles": [8.0, -2.0],
@@ -62,8 +63,9 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
         with patch(
             "app.services.contour_pupil_processor.detect_pupil_contour",
             return_value=((20, 40), (0, 0), (10, 10)),
-        ), patch(
-            "app.services.contour_pupil_processor.extract_contour_gaze_data",
+        ), patch.object(
+            processor._gaze_tracker,
+            "extract_gaze_numbers",
             side_effect=RuntimeError("gaze exploded"),
         ), patch(
             "app.services.contour_pupil_processor.map_gaze_angles_to_screen"
@@ -100,6 +102,34 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
         self.assertEqual(second["cursor"], {"x": 600, "y": 400, "confidence": 0.1})
         self.assertEqual(second["diagnostics"]["reason"], "no_detection_hold_last")
         self.assertTrue(second["diagnostics"]["used_fallback"])
+
+    def test_detection_uses_smoothed_center_for_gaze_extraction(self):
+        processor = ContourPupilFrameProcessor(screen_size_provider=lambda: (1000, 500))
+        frame_bytes = _jpeg_frame(width=200, height=100)
+
+        with patch(
+            "app.services.contour_pupil_processor.detect_pupil_contour",
+            side_effect=[((10, 10), (0, 0), (8, 8)), ((20, 20), (0, 0), (8, 8))],
+        ), patch.object(
+            processor._gaze_tracker,
+            "extract_gaze_numbers",
+            return_value={
+                "single_gaze_vector": [0.1, 0.2, 0.9],
+                "single_angles": [8.0, -2.0],
+                "single_offset": [0.05, -0.02],
+            },
+        ) as gaze_mock, patch(
+            "app.services.contour_pupil_processor.map_gaze_angles_to_screen",
+            return_value=(111, 222),
+        ):
+            first = processor.process_frame(frame_bytes, {})
+            second = processor.process_frame(frame_bytes, {})
+
+        self.assertTrue(first["ok"])
+        self.assertTrue(second["ok"])
+        self.assertEqual(gaze_mock.call_count, 2)
+        self.assertEqual(gaze_mock.call_args_list[0].args[0], (10, 10))
+        self.assertEqual(gaze_mock.call_args_list[1].args[0], (13, 13))
 
 
 if __name__ == "__main__":

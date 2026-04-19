@@ -1,323 +1,99 @@
-# EyeCue Testing Checklist
+# EyeCue Testing Checklist (Current Desktop App)
 
-## Pre-Test Setup
+This checklist is aligned to the current single-page Electron UI:
 
-✅ **Backend Server Running**
+`Connect -> Pairing -> Runtime`
+
+## 1. Pre-Test Setup
+
+### Install dependencies
+
 ```bash
-./restart_server.sh
-# Verify: curl http://127.0.0.1:5051/health
-```
+# repo root
+python3 -m venv env
+source env/bin/activate
+pip install -r requirements.txt
 
-✅ **Electron App**
-```bash
+# frontend
 cd app/frontend
 npm install
-npm start
 ```
 
----
+### Launch desktop app (Electron-first)
 
-## Test Flow: Complete User Journey
-
-### 1. Welcome Screen
-- [ ] Page loads with eye logo
-- [ ] "Connect device with provided cable" text visible
-- [ ] Auto-navigates to Connect page after 2 seconds
-- [ ] OR Click anywhere to immediately advance
-- [ ] No console errors
-
-**Expected Result:** Smooth transition to Connect page
-
----
-
-### 2. Connection Form
-- [ ] "Cue Connect" title with eye icon displays
-- [ ] Network Name input field is visible and functional
-- [ ] Network Password input field is visible and functional (password masked)
-- [ ] Serial Port dropdown is populated with available ports
-- [ ] "Auto-detect" option is present in dropdown
-- [ ] "Connect" button is visible and clickable
-- [ ] "Proceed With Wired Connection" link is visible
-
-**Test Cases:**
-
-#### 2a. Form Validation
-- [ ] Try submitting empty form → Error message appears
-- [ ] Fill Network Name only → Error message appears
-- [ ] Fill all fields → Form submits successfully
-
-#### 2b. Serial Port Loading
-- [ ] Check browser console for `/serial/ports` API call
-- [ ] Verify serial ports are fetched from backend
-- [ ] Dropdown shows real port names (e.g., `/dev/cu.Bluetooth-Incoming-Port`)
-
-#### 2c. Form Submission
-- [ ] Fill in all fields with test data:
-  - Network Name: `TestNetwork`
-  - Password: `TestPassword123`
-  - Port: Select any or "Auto-detect"
-- [ ] Click "Connect"
-- [ ] Password is stored in sessionStorage (check DevTools)
-- [ ] Navigates to Flashing page with URL parameters
-
-**Expected Result:** URL should be `flashing.html?ssid=TestNetwork&port=...`
-
----
-
-### 3. Flashing Progress Screen
-- [ ] "Cue Connect" title displays
-- [ ] "Flashing Network Information..." text visible
-- [ ] Animated progress bar is animating (blue bar moving)
-- [ ] Page automatically calls `/serial/connect` API
-- [ ] Check browser console for API call and response
-- [ ] After 1.5-3.5 seconds, auto-navigates to Calibration
-
-**Test Cases:**
-
-#### 3a. Backend Connection (with device)
-- [ ] If ESP32 is connected, credentials are sent
-- [ ] Success message in console logs
-- [ ] Navigates after 1.5 seconds
-
-#### 3b. Backend Connection (no device)
-- [ ] If no device or backend error, still proceeds
-- [ ] Shows console error but doesn't break
-- [ ] Navigates after 3.5 seconds
-
-**Expected Result:** Automatic navigation to Calibration page
-
----
-
-### 4. Calibration Screen (Pre-Fullscreen)
-- [ ] "Cue Connect" title with green eye icon
-- [ ] "First Time Calibration" heading
-- [ ] Blue cursor dot preview with "Cursor" label
-- [ ] "Enter Fullscreen" button is visible and clickable
-- [ ] "Device Info" button in top-right corner
-
-#### 4a. Device Info Button
-- [ ] Click "Device Info" button
-- [ ] Alert/modal shows device status
-- [ ] Status displays connection state, port, errors
-- [ ] Can close and continue
-
-#### 4b. Enter Calibration
-- [ ] Click "Enter Fullscreen" button
-- [ ] Overlay appears with gray background
-- [ ] "Calibration Screen" header at top
-- [ ] "Frame 6" label in top-left
-- [ ] 3×3 grid of 9 nodes appears
-- [ ] First node (top-left) is highlighted green and pulsing
-- [ ] All other nodes are gray and inactive (dim)
-- [ ] Instructions at bottom show current node
-- [ ] Blue cursor dot tracks mouse movement
-- [ ] Fullscreen mode attempts to activate (may not work in all browsers)
-
----
-
-### 5. Calibration Grid (9-Dot Sequence)
-- [ ] **Node 1 (Top-Left):** Green, pulsing, clickable
-- [ ] Click Node 1 → Turns blue (completed)
-- [ ] **Node 2 (Top-Center):** Becomes green, pulsing
-- [ ] Instruction text updates to "Active Node: top center (2/9)"
-- [ ] Click Node 2 → Turns blue
-- [ ] **Node 3 (Top-Right):** Becomes green
-- [ ] Continue through all 9 nodes
-
-**Full Sequence:**
-1. Top-Left → 2. Top-Center → 3. Top-Right
-4. Middle-Left → 5. Middle-Center → 6. Middle-Right
-7. Bottom-Left → 8. Bottom-Center → 9. Bottom-Right
-
-**Test Each Node:**
-- [ ] Only active node is green and pulsing
-- [ ] Completed nodes stay blue
-- [ ] Inactive nodes stay gray and dim
-- [ ] Can't click inactive nodes (pointer-events: none)
-- [ ] Clicking wrong node does nothing
-- [ ] Instruction text updates with each node
-- [ ] Counter shows progress (1/9, 2/9, ... 9/9)
-- [ ] Blue cursor tracks mouse throughout
-
----
-
-### 6. Calibration Completion
-After clicking all 9 nodes:
-- [ ] All nodes turn blue
-- [ ] "Frame 7" label appears (updates from "Frame 6")
-- [ ] Instructions text disappears
-- [ ] White modal appears with "Calibration Complete"
-- [ ] "Exit Fullscreen" button visible
-- [ ] API call to `/prefs/calibration` is made
-- [ ] Check browser console for successful save
-- [ ] Backend receives calibration data
-
-#### 6a. Exit to Settings
-- [ ] Click "Exit Fullscreen" button
-- [ ] Fullscreen mode exits
-- [ ] Navigates to Settings Menu
-- [ ] No errors in console
-
----
-
-### 7. Settings Menu
-- [ ] "Cue Connect" title with green eye icon
-- [ ] "Settings Menu" heading
-- [ ] "Device Info" button in top-right
-- [ ] Connection Mode section with WiFi/Wired toggle
-- [ ] WiFi button is selected (blue background)
-- [ ] Horizontal Sensitivity slider (0-100)
-- [ ] Vertical Sensitivity slider (0-100)
-- [ ] Slider values display next to sliders
-- [ ] Four buttons visible:
-  - [ ] "Recalibrate"
-  - [ ] "Advanced Settings"
-  - [ ] "Live Info View"
-  - [ ] "Flash WiFi Information"
-- [ ] "860 × 860, Frame 10" indicator at bottom-right
-
-**Test Cases:**
-
-#### 7a. Connection Mode Toggle
-- [ ] WiFi button is active (blue)
-- [ ] Click "Wired" → Becomes active (blue)
-- [ ] Click "WiFi" → Returns to active (blue)
-- [ ] Selection is saved to localStorage
-- [ ] Selection is saved to backend (check `/prefs`)
-
-#### 7b. Sensitivity Sliders
-- [ ] Drag Horizontal slider → Value updates
-- [ ] Number next to slider updates in real-time
-- [ ] Drag Vertical slider → Value updates
-- [ ] Values are saved to localStorage
-- [ ] Values are saved to backend
-- [ ] Verify: check browser console for API calls
-
-#### 7c. Recalibrate Button
-- [ ] Click "Recalibrate"
-- [ ] Navigates back to Calibration page
-- [ ] Can complete calibration again
-- [ ] Returns to Settings after completion
-
-#### 7d. Advanced Settings Button
-- [ ] Click "Advanced Settings"
-- [ ] Navigates to Advanced Settings page
-- [ ] No console errors
-
-#### 7e. Live Info View Button
-- [ ] Click "Live Info View"
-- [ ] Alert/modal appears (placeholder)
-- [ ] Can close and continue
-
-#### 7f. Flash WiFi Information Button
-- [ ] Click "Flash WiFi Information"
-- [ ] Navigates to Connect page
-- [ ] Can fill out form and proceed through flow again
-
-#### 7g. Device Info Button
-- [ ] Click "Device Info"
-- [ ] Alert shows device status
-- [ ] Shows connection mode (WiFi/Wired)
-- [ ] Shows connection status
-- [ ] Shows port and errors
-
----
-
-### 8. Advanced Settings Menu
-- [ ] "Cue Connect" title with green eye icon
-- [ ] "Advanced Settings Menu" heading
-- [ ] "Device Info" button in top-right
-- [ ] "Preference 1" dropdown with options
-- [ ] "Preference 2" dropdown with options
-- [ ] Horizontal Sensitivity slider (0-100)
-- [ ] Vertical Sensitivity slider (0-100)
-- [ ] "Back" button visible and functional
-- [ ] "Frame 9" indicator at bottom-right
-
-**Test Cases:**
-
-#### 8a. Preference Dropdowns
-- [ ] Click Preference 1 dropdown → Options visible
-- [ ] Select a different option → Saves automatically
-- [ ] Click Preference 2 dropdown → Options visible
-- [ ] Select a different option → Saves automatically
-- [ ] Values saved to localStorage
-- [ ] Values saved to backend
-
-#### 8b. Sensitivity Sliders
-- [ ] Sliders show same values as Settings page
-- [ ] Drag sliders → Values update
-- [ ] Changes sync with Settings page
-- [ ] Values persist across navigation
-
-#### 8c. Back Button
-- [ ] Click "Back" button
-- [ ] Navigates to Settings Menu
-- [ ] Settings values are preserved
-
-#### 8d. Device Info Button
-- [ ] Click "Device Info"
-- [ ] Alert shows same info as Settings page
-
----
-
-## Navigation Tests
-
-### Bidirectional Navigation
-- [ ] Settings → Advanced Settings → Back → Settings (preserves state)
-- [ ] Settings → Recalibrate → Complete → Settings (preserves state)
-- [ ] Settings → Flash WiFi → Connect → Flashing → Calibration → Settings
-- [ ] Any page → Device Info → Close → Same page (no state loss)
-
-### State Persistence
-- [ ] Set sliders in Settings → Navigate away → Return → Values preserved
-- [ ] Set sliders in Advanced Settings → Navigate away → Return → Values preserved
-- [ ] Complete calibration → Check backend → Data saved
-- [ ] Refresh any page → Check if backend prefs load correctly
-
----
-
-## Backend API Tests
-
-### Test All Endpoints
 ```bash
-# Health check
-curl http://127.0.0.1:5051/health
-
-# List serial ports
-curl http://127.0.0.1:5051/serial/ports
-
-# Get preferences
-curl http://127.0.0.1:5051/prefs
-
-# Update preferences (test)
-curl -X PUT http://127.0.0.1:5051/prefs \
-  -H "Content-Type: application/json" \
-  -d '{"horizontal_sensitivity": 75}'
-
-# Verify update
-curl http://127.0.0.1:5051/prefs
-
-# Check saved file
-cat ~/.eyecue/prefs.json
+cd app/frontend
+npm run start:desktop
 ```
 
-### API Tests Checklist
-- [ ] `/health` returns `{"status": "ok"}`
-- [ ] `/serial/ports` returns list of ports
-- [ ] `/prefs` GET returns all preferences
-- [ ] `/prefs` PUT updates preferences
-- [ ] `/prefs/calibration` POST saves calibration data
-- [ ] `~/.eyecue/prefs.json` file is created and updated
-- [ ] CORS headers are present (Access-Control-Allow-Origin: *)
+`start:desktop` builds `dist/eyecue-backend` and starts Electron.
 
----
+## 2. Connect Screen
 
-## Browser Console Checks
+- [ ] App opens directly in Electron (no manual Flask launch required)
+- [ ] Logo/background/glass UI renders
+- [ ] Network Name, Network Password, Serial Port inputs are interactive
+- [ ] Connect Device button works
+- [ ] Bypass Connect button works
 
-### No Errors
-- [ ] No red errors in Console tab
-- [ ] No 404 errors for missing resources
+Validation:
+
+- [ ] Empty connect form shows validation error
+- [ ] Serial port list populates from `/serial/ports`
+
+## 3. Pairing Screen
+
+- [ ] Connect Device transitions to Pairing
+- [ ] Bypass Connect transitions to Pairing
+- [ ] Pairing phase text updates with backend state
+- [ ] Cancel Pairing returns to Connect and stops runtime best-effort
+
+## 4. Runtime Screen
+
+- [ ] Runtime screen appears when phase reaches streaming/retrying
+- [ ] Tracking toggle calls `/runtime/tracking` and updates state
+- [ ] Status panel receives alerts and frame count updates
+- [ ] Stop Runtime returns to Connect
+- [ ] Back To Connect returns to Connect via stop flow
+
+## 5. Backend Health/API Smoke Tests
+
+With app running:
+
+```bash
+curl http://127.0.0.1:5051/health
+curl http://127.0.0.1:5051/app/bootstrap
+curl http://127.0.0.1:5051/runtime/state
+```
+
+Expected:
+
+- [ ] `/health` returns `{ "ok": true }`
+- [ ] `/app/bootstrap` returns prefs, ports, runtime shape
+- [ ] `/runtime/state` returns phase/tracking/alerts structure
+
+## 6. Packaging Smoke Test
+
+```bash
+# repo root
+./build.sh
+```
+
+Expected:
+
+- [ ] `dist/eyecue-backend` exists
+- [ ] Electron artifacts exist under `app/frontend/out/make/`
+
+## 7. Regression Checks
+
+- [ ] No dead buttons (all visible actions transition to valid states)
+- [ ] No console exceptions on connect/bypass/stop/tracking
+- [ ] App closes cleanly (backend stops when Electron quits)
+
+## Legacy Note
+
+Some root scripts and docs under `old_files/` or historical checklists are legacy/experimental.
+For desktop validation, use this checklist and Electron workflows above.
 - [ ] No CORS errors
 - [ ] No failed API calls (or graceful fallbacks)
 

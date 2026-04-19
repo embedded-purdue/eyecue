@@ -10,13 +10,21 @@ If you are simulating a webcam, set `BYPASS_SERIAL` to `true`.
 Setup the virtual environment (venv) by running `python3 -m venv env` from the project root.
 Then, install all dependencies by running `pip install -r requirements.txt`.
 
-Resolve dependencies by running `source env/bin/activate` and start the webcam simulator
-with `python app-tests/serve_webcam.py`. Then, start the app with `cd app/frontend && npm start`.
+Resolve frontend dependencies and run the desktop app from Electron:
+
+```bash
+cd app/frontend
+npm install
+npm run start:desktop
+```
+
+`start:desktop` builds the PyInstaller backend binary and starts Electron.
+The app then launches the backend binary directly (no Python launcher in normal desktop flow).
 
 This will launch the eyecue app. To build the app, see the instructions below.
 
 Open the app and run `xattr -cr /path/to/eyecue-frontend.app` to remove the quarantine.
-Run `npx electron-forge make` to create a working binary in `app/frontend/out/make/zip/darwin/arm64`.
+Run `./build.sh` from the repo root (or `npm run make` in `app/frontend`) to create a desktop binary in `app/frontend/out/make/`.
 
 ## overview
 
@@ -48,6 +56,13 @@ python3 contour_gaze_tracker.py --camera 0 --output test.mp4
 python -m app.app
 ```
 
+Desktop app entrypoint (recommended):
+
+```bash
+cd app/frontend
+npm run start:desktop
+```
+
 ### command line arguments
 
 - `--camera`: camera index (0, 1, 2...), video file path, or esp32 stream url
@@ -74,6 +89,8 @@ python -m app.app
 - `run_esp32_gaze.sh` - quick script to run with esp32 camera
 - `blink_detector.py` - blink detection for click functionality
 - `autoscroll.py` - auto-scroll functionality
+
+For the desktop product, scripts above are optional/legacy helpers; Electron is the main entrypoint.
 
 ### archived
 

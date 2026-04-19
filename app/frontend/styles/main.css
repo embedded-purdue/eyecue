@@ -63,47 +63,6 @@ body::before {
   user-select: none;
 }
 
-.window-chrome {
-  height: 20px;
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  margin-bottom: 10px;
-  -webkit-app-region: drag;
-}
-
-.window-controls {
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  -webkit-app-region: no-drag;
-}
-
-.window-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  border: 1px solid rgba(0, 0, 0, 0.16);
-  cursor: pointer;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
-}
-
-.window-dot:hover {
-  transform: scale(1.05);
-}
-
-.window-dot-close {
-  background: #ff5f57;
-}
-
-.window-dot-minimize {
-  background: #ffbd2e;
-}
-
-.window-dot-maximize {
-  background: #28c840;
-}
-
 .container.dragging {
   cursor: grabbing;
   transition: none;
@@ -565,15 +524,6 @@ h2 {
     border-radius: 18px;
     transform: none;
     cursor: default;
-  }
-
-  .window-chrome {
-    height: 18px;
-  }
-
-  .window-dot {
-    width: 11px;
-    height: 11px;
   }
 
   .glass-optics {

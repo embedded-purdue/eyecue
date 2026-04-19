@@ -2,8 +2,18 @@
 
 ## Build
 
-Running `npx electron-forge make` from `app/frontend` packages a binary in `frontend/out/make`.
-Alternatively, running `./build.sh` from the project root also works.
+Run `./build.sh` from the project root.
+
+This builds:
+- `dist/eyecue-backend` (PyInstaller backend binary)
+- Electron distributables in `app/frontend/out/make/`
+
+Equivalent commands:
+
+```bash
+bash build_backend.sh
+cd app/frontend && npm run make
+```
 
 ## Testing
 
@@ -14,7 +24,12 @@ Setup the virtual environment (venv) by running `python3 -m venv env` from the p
 Then, install all dependencies by running `pip install -r requirements.txt`.
 
 Resolve dependencies by running `source env/bin/activate` and start the webcam simulator
-with `python app-tests/serve_webcam.py`. Then, start the app with `cd app/frontend && npm start`.
+with `python app-tests/serve_webcam.py`. Then, start the desktop app with:
+
+```bash
+cd app/frontend
+npm run start:desktop
+```
 
 ## Overview
 
@@ -23,6 +38,13 @@ This backend implements one prototype pipeline:
 `Network credentials -> ESP32 serial provisioning -> MJPEG stream -> CV processing -> optional cursor control`
 
 ## Start
+
+```bash
+cd app/frontend
+npm run start:desktop
+```
+
+Developer fallback (only if backend binary is missing):
 
 ```bash
 python3 -m app.app

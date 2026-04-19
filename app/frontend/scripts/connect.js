@@ -17,32 +17,12 @@ let pollingTimer = null;
 let renderedAlertId = 0;
 let lastPollErrorMessage = "";
 
-function initWindowControls() {
-  const api = window.electronAPI;
-  if (!api || typeof api.windowControl !== "function") {
-    return;
-  }
-
-  const closeBtn = document.getElementById("windowClose");
-  const minimizeBtn = document.getElementById("windowMinimize");
-  const maximizeBtn = document.getElementById("windowMaximize");
-
-  if (closeBtn) {
-    closeBtn.addEventListener("click", () => api.windowControl("close"));
-  }
-  if (minimizeBtn) {
-    minimizeBtn.addEventListener("click", () => api.windowControl("minimize"));
-  }
-  if (maximizeBtn) {
-    maximizeBtn.addEventListener("click", () => api.windowControl("maximize-toggle"));
-  }
-}
-
 function initInteractiveGlass() {
   const container = document.querySelector(".container");
   if (!container) return;
 
   const state = {
+    pendingDrag: false,
     dragging: false,
     pointerId: null,
     startX: 0,
@@ -53,6 +33,7 @@ function initInteractiveGlass() {
     y: 0,
     bounds: null,
   };
+  const dragThresholdPx = 6;
 
   const interactiveSelector = "input, select, button, textarea, option, a, label";
 
@@ -136,20 +117,35 @@ function initInteractiveGlass() {
       return;
     }
 
-    state.dragging = true;
+    state.pendingDrag = true;
+    state.dragging = false;
     state.pointerId = event.pointerId;
     state.startX = event.clientX;
     state.startY = event.clientY;
     state.baseX = state.x;
     state.baseY = state.y;
-    state.bounds = computeBounds(container.getBoundingClientRect(), state.baseX, state.baseY);
-    container.classList.add("dragging");
     container.setPointerCapture(event.pointerId);
-    applyOpticsFromPointer(event.clientX, event.clientY);
   });
 
   container.addEventListener("pointermove", (event) => {
-    if (!state.dragging || event.pointerId !== state.pointerId) {
+    if (event.pointerId !== state.pointerId) {
+      return;
+    }
+
+    if (state.pendingDrag && !state.dragging) {
+      const dx = event.clientX - state.startX;
+      const dy = event.clientY - state.startY;
+      const distance = Math.hypot(dx, dy);
+      if (distance < dragThresholdPx) {
+        return;
+      }
+      state.pendingDrag = false;
+      state.dragging = true;
+      state.bounds = computeBounds(container.getBoundingClientRect(), state.baseX, state.baseY);
+      container.classList.add("dragging");
+    }
+
+    if (!state.dragging) {
       return;
     }
 
@@ -165,9 +161,23 @@ function initInteractiveGlass() {
   });
 
   function finishDrag(event) {
-    if (!state.dragging || (event && event.pointerId !== state.pointerId)) {
+    if (event && state.pointerId !== null && event.pointerId !== state.pointerId) {
       return;
     }
+
+    if (!state.dragging) {
+      state.pendingDrag = false;
+      if (state.pointerId !== null) {
+        try {
+          container.releasePointerCapture(state.pointerId);
+        } catch (_err) {
+          // ignore stale capture errors
+        }
+      }
+      state.pointerId = null;
+      return;
+    }
+    state.pendingDrag = false;
     state.dragging = false;
     container.classList.remove("dragging");
     resetTiltAndOptics();
@@ -434,7 +444,6 @@ document.getElementById("stopButton").addEventListener("click", async () => {
 });
 
 async function init() {
-  initWindowControls();
   initInteractiveGlass();
 
   try {

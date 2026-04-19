@@ -4,10 +4,12 @@
   "description": "EyeCue Electron Frontend",
   "main": "main.js",
   "scripts": {
-    "start": "electron-forge start",
-    "dev": "electron . --debug",
-    "package": "electron-forge package",
-    "make": "electron-forge make"
+    "backend:build": "cd ../.. && bash build_backend.sh",
+    "start": "npx electron-forge start",
+    "start:desktop": "npm run backend:build && npx electron-forge start",
+    "dev": "npx electron . --debug",
+    "package": "npm run backend:build && npx electron-forge package",
+    "make": "npm run backend:build && npx electron-forge make"
   },
   "keywords": [
     "eyecue",

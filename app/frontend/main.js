@@ -19,6 +19,47 @@ let backendOwned = false;
 let quitInProgress = false;
 let shutdownPromise = null;
 
+function resolveBackendLaunch() {
+  if (app.isPackaged) {
+    return {
+      exec: path.join(process.resourcesPath, "eyecue-backend"),
+      args: [],
+      cwd: process.resourcesPath,
+      mode: "packaged-binary",
+    };
+  }
+
+  const projectRoot = path.resolve(__dirname, "..", "..");
+  const overrideBinary = process.env.EYECUE_BACKEND_BINARY;
+  const distBinary = path.join(projectRoot, "dist", "eyecue-backend");
+
+  if (overrideBinary && fs.existsSync(overrideBinary)) {
+    return {
+      exec: overrideBinary,
+      args: [],
+      cwd: projectRoot,
+      mode: "env-binary",
+    };
+  }
+
+  if (fs.existsSync(distBinary)) {
+    return {
+      exec: distBinary,
+      args: [],
+      cwd: projectRoot,
+      mode: "dev-binary",
+    };
+  }
+
+  const venvPython = path.join(projectRoot, "env", "bin", "python");
+  return {
+    exec: fs.existsSync(venvPython) ? venvPython : "python3",
+    args: ["-m", "app.app"],
+    cwd: projectRoot,
+    mode: "python-fallback",
+  };
+}
+
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -94,24 +135,11 @@ function startBackendProcess() {
     return;
   }
 
-  let pythonExec, spawnArgs, spawnCwd;
+  const launch = resolveBackendLaunch();
+  process.stdout.write(`[backend] launch mode=${launch.mode} exec=${launch.exec}\n`);
 
-  if (app.isPackaged) {
-    // Use the self-contained PyInstaller binary bundled in Resources/
-    pythonExec = path.join(process.resourcesPath, "eyecue-backend");
-    spawnArgs = [];
-    spawnCwd = process.resourcesPath;
-  } else {
-    // Development: run Flask via the venv Python
-    const projectRoot = path.resolve(__dirname, "..", "..");
-    const venvPython = path.join(projectRoot, "env", "bin", "python");
-    pythonExec = fs.existsSync(venvPython) ? venvPython : "python3";
-    spawnArgs = ["-m", "app.app"];
-    spawnCwd = projectRoot;
-  }
-
-  backendProcess = spawn(pythonExec, spawnArgs, {
-    cwd: spawnCwd,
+  backendProcess = spawn(launch.exec, launch.args, {
+    cwd: launch.cwd,
     stdio: ["ignore", "pipe", "pipe"],
   });
   backendOwned = true;

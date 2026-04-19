@@ -38,7 +38,6 @@ a = Analysis(
         'app.serial_connect',
         'app.prefs_utils',
         # Optional runtime deps
-        'pyserial',
         'serial',
         'serial.tools',
         'serial.tools.list_ports',

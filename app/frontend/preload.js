@@ -16,4 +16,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowControl: (action) => {
     ipcRenderer.send('window-control', action);
   },
+  beginWindowResize: (edge, screenX, screenY, minWidth, minHeight) => {
+    ipcRenderer.send('window-resize-start', { edge, screenX, screenY, minWidth, minHeight });
+  },
+  moveWindowResize: (screenX, screenY, minWidth, minHeight) => {
+    ipcRenderer.send('window-resize-move', { screenX, screenY, minWidth, minHeight });
+  },
+  endWindowResize: () => {
+    ipcRenderer.send('window-resize-end');
+  },
 });

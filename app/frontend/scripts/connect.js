@@ -28,170 +28,65 @@ let bootstrapLoaded = false;
 let currentScreenMode = "connect";
 let runtimeReadyStreak = 0;
 let pairingTransitionLockUntil = 0;
+let activeResizeEdge = null;
+
+const RESIZE_MIN_WIDTH = 860;
+const RESIZE_MIN_HEIGHT = 920;
 
 function initInteractiveGlass() {
   const container = document.querySelector(".container");
   if (!container) return;
 
-  const state = {
-    pendingDrag: false,
-    dragging: false,
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    baseX: 0,
-    baseY: 0,
-    x: 0,
-    y: 0,
-    bounds: null,
-  };
-  const dragThresholdPx = 6;
+  // Dragging is handled by CSS app-region on the container.
+  // Keep this hook for future visual effects, but do not add motion here.
+}
 
-  const interactiveSelector = "input, select, button, textarea, option, a, label";
+function bindWindowResizeHandles() {
+  if (!window.electronAPI) return;
 
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
+  const handles = document.querySelectorAll(".window-edge-resize, .resize-handle");
+  handles.forEach((handle) => {
+    const edge = handle.dataset.edge;
+    if (!edge) return;
 
-  function applyDragVars(x, y) {
-    state.x = x;
-    state.y = y;
-    container.style.setProperty("--drag-x", `${x}px`);
-    container.style.setProperty("--drag-y", `${y}px`);
-  }
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      activeResizeEdge = edge;
+      const resizeEdge = edge === "top-left" || edge === "top-right" || edge === "bottom-left" || edge === "bottom-right"
+        ? edge
+        : edge;
+      window.electronAPI.beginWindowResize(
+        resizeEdge,
+        event.screenX,
+        event.screenY,
+        RESIZE_MIN_WIDTH,
+        RESIZE_MIN_HEIGHT,
+      );
 
-  function resetTiltAndOptics() {
-    container.style.setProperty("--tilt-x", "0deg");
-    container.style.setProperty("--tilt-y", "0deg");
-    container.style.setProperty("--edge-opacity", "0.78");
-    container.style.setProperty("--edge-blur", "0px");
-    container.style.setProperty("--glare-opacity", "0.78");
-    container.style.setProperty("--caustic-opacity", "0.74");
-    container.style.setProperty("--prism-opacity", "0.72");
-  }
+      const onMove = (moveEvent) => {
+        if (!activeResizeEdge) return;
+        window.electronAPI.moveWindowResize(
+          moveEvent.screenX,
+          moveEvent.screenY,
+          RESIZE_MIN_WIDTH,
+          RESIZE_MIN_HEIGHT,
+        );
+      };
 
-  function computeBounds(rect, baseX, baseY) {
-    const margin = 8;
-    return {
-      minX: baseX + (margin - rect.left),
-      maxX: baseX + (window.innerWidth - margin - rect.right),
-      minY: baseY + (margin - rect.top),
-      maxY: baseY + (window.innerHeight - margin - rect.bottom),
-    };
-  }
+      const endResize = () => {
+        if (!activeResizeEdge) return;
+        activeResizeEdge = null;
+        window.electronAPI.endWindowResize();
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", endResize);
+      };
 
-  function clampToViewport(x, y) {
-    const rect = container.getBoundingClientRect();
-    const bounds = computeBounds(rect, x, y);
-    return {
-      x: clamp(x, bounds.minX, bounds.maxX),
-      y: clamp(y, bounds.minY, bounds.maxY),
-    };
-  }
-
-  container.addEventListener("pointerdown", (event) => {
-    if (window.matchMedia("(max-width: 640px)").matches) {
-      return;
-    }
-    if (event.button !== 0) {
-      return;
-    }
-    if (event.target.closest(interactiveSelector)) {
-      return;
-    }
-
-    state.pendingDrag = true;
-    state.dragging = false;
-    state.pointerId = event.pointerId;
-    state.startX = event.clientX;
-    state.startY = event.clientY;
-    state.baseX = state.x;
-    state.baseY = state.y;
-    container.setPointerCapture(event.pointerId);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", endResize, { once: true });
+      window.addEventListener("blur", endResize, { once: true });
+    });
   });
-
-  container.addEventListener("pointermove", (event) => {
-    if (event.pointerId !== state.pointerId) {
-      return;
-    }
-
-    if (state.pendingDrag && !state.dragging) {
-      const dx = event.clientX - state.startX;
-      const dy = event.clientY - state.startY;
-      const distance = Math.hypot(dx, dy);
-      if (distance < dragThresholdPx) {
-        return;
-      }
-      state.pendingDrag = false;
-      state.dragging = true;
-      state.bounds = computeBounds(container.getBoundingClientRect(), state.baseX, state.baseY);
-      container.classList.add("dragging");
-    }
-
-    if (!state.dragging) {
-      return;
-    }
-
-    const bounds = state.bounds || { minX: -9999, maxX: 9999, minY: -9999, maxY: 9999 };
-    const tentativeX = state.baseX + (event.clientX - state.startX);
-    const tentativeY = state.baseY + (event.clientY - state.startY);
-    const nextX = clamp(tentativeX, bounds.minX, bounds.maxX);
-    const nextY = clamp(tentativeY, bounds.minY, bounds.maxY);
-
-    applyDragVars(nextX, nextY);
-  });
-
-  function finishDrag(event) {
-    if (event && state.pointerId !== null && event.pointerId !== state.pointerId) {
-      return;
-    }
-
-    if (!state.dragging) {
-      state.pendingDrag = false;
-      if (state.pointerId !== null) {
-        try {
-          container.releasePointerCapture(state.pointerId);
-        } catch (_err) {
-          // ignore stale capture errors
-        }
-      }
-      state.pointerId = null;
-      return;
-    }
-    state.pendingDrag = false;
-    state.dragging = false;
-    container.classList.remove("dragging");
-    resetTiltAndOptics();
-    if (state.pointerId !== null) {
-      try {
-        container.releasePointerCapture(state.pointerId);
-      } catch (_err) {
-        // ignore stale capture errors
-      }
-    }
-    state.pointerId = null;
-  }
-
-  container.addEventListener("pointerup", finishDrag);
-  container.addEventListener("pointercancel", finishDrag);
-  container.addEventListener("pointerleave", () => {
-    if (!state.dragging) {
-      resetTiltAndOptics();
-    }
-  });
-
-  window.addEventListener("resize", () => {
-    if (window.matchMedia("(max-width: 640px)").matches) {
-      applyDragVars(0, 0);
-      resetTiltAndOptics();
-      return;
-    }
-    const clamped = clampToViewport(state.x, state.y);
-    applyDragVars(clamped.x, clamped.y);
-    resetTiltAndOptics();
-  });
-
-  resetTiltAndOptics();
 }
 
 function renderPorts(ports, selectedPort) {
@@ -518,6 +413,7 @@ document.getElementById("stopButton").addEventListener("click", async () => {
 
 async function init() {
   initInteractiveGlass();
+  bindWindowResizeHandles();
 
   try {
     await loadBootstrap();

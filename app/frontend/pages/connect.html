@@ -8,9 +8,17 @@
   <link rel="stylesheet" href="../styles/main.css">
 </head>
 <body>
-  <div class="window-drag-bar" aria-hidden="true"></div>
-
+  <div class="window-edge-resize edge-top" data-edge="top" aria-hidden="true"></div>
+  <div class="window-edge-resize edge-bottom" data-edge="bottom" aria-hidden="true"></div>
+  <div class="window-edge-resize edge-left" data-edge="left" aria-hidden="true"></div>
+  <div class="window-edge-resize edge-right" data-edge="right" aria-hidden="true"></div>
   <div class="container">
+    <div class="resize-handle resize-nw" data-edge="top-left" aria-hidden="true"></div>
+    <div class="resize-handle resize-ne" data-edge="top-right" aria-hidden="true"></div>
+    <div class="resize-handle resize-sw" data-edge="bottom-left" aria-hidden="true"></div>
+    <div class="resize-handle resize-se" data-edge="bottom-right" aria-hidden="true"></div>
+    <div class="window-drag-area" aria-hidden="true"></div>
+
     <div class="glass-optics" aria-hidden="true">
       <div class="glass-edge"></div>
       <div class="glass-glare"></div>

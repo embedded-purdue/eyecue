@@ -18,6 +18,7 @@ let backendProcess = null;
 let backendOwned = false;
 let quitInProgress = false;
 let shutdownPromise = null;
+const activeResizeSessions = new Map();
 
 function resolveBackendLaunch() {
   if (app.isPackaged) {
@@ -173,14 +174,17 @@ async function ensureBackend() {
 
 function createWindow() {
   const appIconPath = path.join(__dirname, "assets", "eyecue-logo.png");
+  const isMac = process.platform === "darwin";
   mainWindow = new BrowserWindow({
-    width: 860,
+    width: 980,
     height: 860,
-    minWidth: 700,
-    minHeight: 700,
+    minWidth: 860,
+    minHeight: 720,
     resizable: true,
     frame: false,
     titleBarStyle: "hidden",
+    transparent: true,
+    backgroundColor: "#00000000",
     icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
     webPreferences: {
       nodeIntegration: false,
@@ -225,6 +229,81 @@ ipcMain.on("window-control", (event, action) => {
   if (action === "close") {
     senderWindow.close();
   }
+});
+
+ipcMain.on("window-resize-start", (event, payload) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (!senderWindow || senderWindow.isDestroyed()) {
+    return;
+  }
+
+  const edge = String(payload?.edge || "");
+  if (!edge) {
+    return;
+  }
+
+  const bounds = senderWindow.getBounds();
+  activeResizeSessions.set(senderWindow.id, {
+    edge,
+    startX: Number(payload?.screenX) || 0,
+    startY: Number(payload?.screenY) || 0,
+    bounds,
+  });
+});
+
+ipcMain.on("window-resize-move", (event, payload) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (!senderWindow || senderWindow.isDestroyed()) {
+    return;
+  }
+
+  const session = activeResizeSessions.get(senderWindow.id);
+  if (!session) {
+    return;
+  }
+
+  const currentX = Number(payload?.screenX) || 0;
+  const currentY = Number(payload?.screenY) || 0;
+  const deltaX = currentX - session.startX;
+  const deltaY = currentY - session.startY;
+
+  const minWidth = Number(payload?.minWidth) || 860;
+  const minHeight = Number(payload?.minHeight) || 920;
+
+  const nextBounds = { ...session.bounds };
+
+  if (session.edge.includes("left")) {
+    const maxShift = session.bounds.width - minWidth;
+    const shift = Math.max(Math.min(deltaX, maxShift), -maxShift);
+    nextBounds.x = session.bounds.x + shift;
+    nextBounds.width = session.bounds.width - shift;
+  }
+
+  if (session.edge.includes("right")) {
+    nextBounds.width = Math.max(minWidth, session.bounds.width + deltaX);
+  }
+
+  if (session.edge.includes("top")) {
+    const maxShift = session.bounds.height - minHeight;
+    const shift = Math.max(Math.min(deltaY, maxShift), -maxShift);
+    nextBounds.y = session.bounds.y + shift;
+    nextBounds.height = session.bounds.height - shift;
+  }
+
+  if (session.edge.includes("bottom")) {
+    nextBounds.height = Math.max(minHeight, session.bounds.height + deltaY);
+  }
+
+  senderWindow.setBounds(nextBounds, false);
+});
+
+ipcMain.on("window-resize-end", (event) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (!senderWindow) {
+    return;
+  }
+
+  activeResizeSessions.delete(senderWindow.id);
 });
 
 async function shutdownBackend() {

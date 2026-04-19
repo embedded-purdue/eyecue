@@ -25,6 +25,9 @@ let pollingTimer = null;
 let renderedAlertId = 0;
 let lastPollErrorMessage = "";
 let bootstrapLoaded = false;
+let currentScreenMode = "connect";
+let runtimeReadyStreak = 0;
+let pairingTransitionLockUntil = 0;
 
 function initInteractiveGlass() {
   const container = document.querySelector(".container");
@@ -55,35 +58,6 @@ function initInteractiveGlass() {
     state.y = y;
     container.style.setProperty("--drag-x", `${x}px`);
     container.style.setProperty("--drag-y", `${y}px`);
-  }
-
-  function applyOpticsFromPointer(clientX, clientY) {
-    const rect = container.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
-
-    const relX = clamp((clientX - rect.left) / rect.width, 0, 1);
-    const relY = clamp((clientY - rect.top) / rect.height, 0, 1);
-
-    const tiltX = (0.5 - relY) * 10;
-    const tiltY = (relX - 0.5) * 10;
-    container.style.setProperty("--tilt-x", `${tiltX.toFixed(2)}deg`);
-    container.style.setProperty("--tilt-y", `${tiltY.toFixed(2)}deg`);
-
-    container.style.setProperty("--glare-x", `${(relX * 100).toFixed(1)}%`);
-    container.style.setProperty("--glare-y", `${(8 + relY * 35).toFixed(1)}%`);
-    container.style.setProperty("--caustic-x", `${(58 + relX * 34).toFixed(1)}%`);
-    container.style.setProperty("--caustic-y", `${(52 + relY * 36).toFixed(1)}%`);
-    container.style.setProperty("--prism-x", `${(10 + relX * 38).toFixed(1)}%`);
-    container.style.setProperty("--prism-y", `${(72 + relY * 24).toFixed(1)}%`);
-    container.style.setProperty("--glare-angle", `${((relX - 0.5) * 22).toFixed(1)}deg`);
-    container.style.setProperty("--prism-angle", `${((-12 + relY * 20)).toFixed(1)}deg`);
-
-    const dragStrength = clamp((Math.abs(state.x) + Math.abs(state.y)) / 280, 0, 1);
-    container.style.setProperty("--edge-opacity", `${(0.78 + dragStrength * 0.2).toFixed(2)}`);
-    container.style.setProperty("--edge-blur", `${(dragStrength * 0.8).toFixed(2)}px`);
-    container.style.setProperty("--glare-opacity", `${(0.78 + dragStrength * 0.18).toFixed(2)}`);
-    container.style.setProperty("--caustic-opacity", `${(0.74 + dragStrength * 0.2).toFixed(2)}`);
-    container.style.setProperty("--prism-opacity", `${(0.72 + dragStrength * 0.18).toFixed(2)}`);
   }
 
   function resetTiltAndOptics() {
@@ -157,8 +131,6 @@ function initInteractiveGlass() {
     if (!state.dragging) {
       return;
     }
-
-    applyOpticsFromPointer(event.clientX, event.clientY);
 
     const bounds = state.bounds || { minX: -9999, maxX: 9999, minY: -9999, maxY: 9999 };
     const tentativeX = state.baseX + (event.clientX - state.startX);
@@ -280,6 +252,8 @@ function setScreen(mode) {
   if (stateEls.runtimeScreen) {
     stateEls.runtimeScreen.classList.toggle("screen-hidden", !showRuntime);
   }
+
+  currentScreenMode = mode;
 }
 
 function phaseToScreen(phase) {
@@ -331,7 +305,59 @@ function renderRuntime(runtime) {
     appendAlert(alerts[i]);
   }
 
-  setScreen(phaseToScreen(phase));
+  const targetScreen = phaseToScreen(phase);
+  const now = Date.now();
+  const isRuntimePhase = phase === "streaming" || phase === "stream_retrying";
+
+  if (isRuntimePhase) {
+    runtimeReadyStreak += 1;
+    pairingTransitionLockUntil = 0;
+  } else {
+    runtimeReadyStreak = 0;
+  }
+
+  let stableScreen = targetScreen;
+
+  // Keep pairing visible briefly while connect request is in flight to prevent idle/connect flicker.
+  if (
+    currentScreenMode === "pairing" &&
+    targetScreen === "connect" &&
+    now < pairingTransitionLockUntil
+  ) {
+    stableScreen = "pairing";
+  }
+
+  // Require two consecutive runtime polls before switching from pairing to runtime.
+  if (
+    currentScreenMode === "pairing" &&
+    targetScreen === "runtime" &&
+    runtimeReadyStreak < 2
+  ) {
+    stableScreen = "pairing";
+  }
+
+  // Once runtime is visible, do not bounce back to pairing on transient reconnect phases.
+  if (currentScreenMode === "runtime" && targetScreen === "pairing") {
+    stableScreen = "runtime";
+  }
+
+  // Screen persistence rules:
+  // - Pairing stays visible unless runtime is actually ready or user cancels.
+  // - Runtime stays visible unless user explicitly exits.
+  // - Connect may auto-enter pairing/runtime only when app boots into active states.
+  if (currentScreenMode === "pairing") {
+    if (!(targetScreen === "runtime" && runtimeReadyStreak >= 2)) {
+      stableScreen = "pairing";
+    }
+  }
+
+  if (currentScreenMode === "runtime") {
+    stableScreen = "runtime";
+  }
+
+  if (stableScreen !== currentScreenMode) {
+    setScreen(stableScreen);
+  }
 }
 
 async function refreshRuntime() {
@@ -407,6 +433,8 @@ document
 
     try {
       setConnectBusy(true);
+      runtimeReadyStreak = 0;
+      pairingTransitionLockUntil = Date.now() + 5000;
       setScreen("pairing");
       const runtime = await window.eyeApi.connectRuntime({
         ssid,
@@ -417,7 +445,7 @@ document
       renderRuntime(runtime);
     } catch (err) {
       appendClientAlert("error", `Connection failed: ${err.message}`);
-      setScreen("connect");
+      setScreen("pairing");
     } finally {
       setConnectBusy(false);
     }
@@ -430,6 +458,8 @@ document.getElementById("bypassButton").addEventListener("click", async () => {
 
   try {
     setConnectBusy(true);
+    runtimeReadyStreak = 0;
+    pairingTransitionLockUntil = Date.now() + 5000;
     setScreen("pairing");
     const runtime = await window.eyeApi.bypassRuntime({
       ssid,
@@ -444,7 +474,7 @@ document.getElementById("bypassButton").addEventListener("click", async () => {
     );
   } catch (err) {
     appendClientAlert("error", `Bypass failed: ${err.message}`);
-    setScreen("connect");
+    setScreen("pairing");
   } finally {
     setConnectBusy(false);
   }

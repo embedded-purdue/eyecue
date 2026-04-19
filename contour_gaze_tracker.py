@@ -10,7 +10,7 @@ import numpy as np
 import math
 import time
 import requests
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Sequence, Union, Dict
 from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
 

@@ -3,7 +3,7 @@
  * Owns Flask lifecycle for the desktop app.
  */
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain } = require("electron");
 const { spawn } = require("child_process");
 const http = require("http");
 const path = require("path");
@@ -150,6 +150,8 @@ function createWindow() {
     minWidth: 700,
     minHeight: 700,
     resizable: true,
+    frame: false,
+    titleBarStyle: "hidden",
     icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
     webPreferences: {
       nodeIntegration: false,
@@ -157,7 +159,6 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       enableBlinkFeatures: "WebBluetooth",
     },
-    titleBarStyle: "default",
     title: "EyeCue",
   });
 
@@ -171,6 +172,31 @@ function createWindow() {
     mainWindow = null;
   });
 }
+
+ipcMain.on("window-control", (event, action) => {
+  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
+  if (!senderWindow || senderWindow.isDestroyed()) {
+    return;
+  }
+
+  if (action === "minimize") {
+    senderWindow.minimize();
+    return;
+  }
+
+  if (action === "maximize-toggle") {
+    if (senderWindow.isMaximized()) {
+      senderWindow.unmaximize();
+    } else {
+      senderWindow.maximize();
+    }
+    return;
+  }
+
+  if (action === "close") {
+    senderWindow.close();
+  }
+});
 
 async function shutdownBackend() {
   if (shutdownPromise) {

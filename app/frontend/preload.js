@@ -12,5 +12,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Add API methods here as needed
   navigateTo: (page) => {
     window.location.href = page;
-  }
+  },
+  windowControl: (action) => {
+    ipcRenderer.send('window-control', action);
+  },
 });

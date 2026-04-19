@@ -4,7 +4,9 @@
 
 const stateEls = {
   connectScreen: document.getElementById("connectScreen"),
+  pairingScreen: document.getElementById("pairingScreen"),
   runtimeScreen: document.getElementById("runtimeScreen"),
+  pairingPhase: document.getElementById("pairingPhaseText"),
   phase: document.getElementById("phaseText"),
   bypass: document.getElementById("bypassText"),
   frames: document.getElementById("framesText"),
@@ -14,6 +16,192 @@ const stateEls = {
 let pollingTimer = null;
 let renderedAlertId = 0;
 let lastPollErrorMessage = "";
+
+function initWindowControls() {
+  const api = window.electronAPI;
+  if (!api || typeof api.windowControl !== "function") {
+    return;
+  }
+
+  const closeBtn = document.getElementById("windowClose");
+  const minimizeBtn = document.getElementById("windowMinimize");
+  const maximizeBtn = document.getElementById("windowMaximize");
+
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => api.windowControl("close"));
+  }
+  if (minimizeBtn) {
+    minimizeBtn.addEventListener("click", () => api.windowControl("minimize"));
+  }
+  if (maximizeBtn) {
+    maximizeBtn.addEventListener("click", () => api.windowControl("maximize-toggle"));
+  }
+}
+
+function initInteractiveGlass() {
+  const container = document.querySelector(".container");
+  if (!container) return;
+
+  const state = {
+    dragging: false,
+    pointerId: null,
+    startX: 0,
+    startY: 0,
+    baseX: 0,
+    baseY: 0,
+    x: 0,
+    y: 0,
+    bounds: null,
+  };
+
+  const interactiveSelector = "input, select, button, textarea, option, a, label";
+
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function applyDragVars(x, y) {
+    state.x = x;
+    state.y = y;
+    container.style.setProperty("--drag-x", `${x}px`);
+    container.style.setProperty("--drag-y", `${y}px`);
+  }
+
+  function applyOpticsFromPointer(clientX, clientY) {
+    const rect = container.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+
+    const relX = clamp((clientX - rect.left) / rect.width, 0, 1);
+    const relY = clamp((clientY - rect.top) / rect.height, 0, 1);
+
+    const tiltX = (0.5 - relY) * 10;
+    const tiltY = (relX - 0.5) * 10;
+    container.style.setProperty("--tilt-x", `${tiltX.toFixed(2)}deg`);
+    container.style.setProperty("--tilt-y", `${tiltY.toFixed(2)}deg`);
+
+    container.style.setProperty("--glare-x", `${(relX * 100).toFixed(1)}%`);
+    container.style.setProperty("--glare-y", `${(8 + relY * 35).toFixed(1)}%`);
+    container.style.setProperty("--caustic-x", `${(58 + relX * 34).toFixed(1)}%`);
+    container.style.setProperty("--caustic-y", `${(52 + relY * 36).toFixed(1)}%`);
+    container.style.setProperty("--prism-x", `${(10 + relX * 38).toFixed(1)}%`);
+    container.style.setProperty("--prism-y", `${(72 + relY * 24).toFixed(1)}%`);
+    container.style.setProperty("--glare-angle", `${((relX - 0.5) * 22).toFixed(1)}deg`);
+    container.style.setProperty("--prism-angle", `${((-12 + relY * 20)).toFixed(1)}deg`);
+
+    const dragStrength = clamp((Math.abs(state.x) + Math.abs(state.y)) / 280, 0, 1);
+    container.style.setProperty("--edge-opacity", `${(0.78 + dragStrength * 0.2).toFixed(2)}`);
+    container.style.setProperty("--edge-blur", `${(dragStrength * 0.8).toFixed(2)}px`);
+    container.style.setProperty("--glare-opacity", `${(0.78 + dragStrength * 0.18).toFixed(2)}`);
+    container.style.setProperty("--caustic-opacity", `${(0.74 + dragStrength * 0.2).toFixed(2)}`);
+    container.style.setProperty("--prism-opacity", `${(0.72 + dragStrength * 0.18).toFixed(2)}`);
+  }
+
+  function resetTiltAndOptics() {
+    container.style.setProperty("--tilt-x", "0deg");
+    container.style.setProperty("--tilt-y", "0deg");
+    container.style.setProperty("--edge-opacity", "0.78");
+    container.style.setProperty("--edge-blur", "0px");
+    container.style.setProperty("--glare-opacity", "0.78");
+    container.style.setProperty("--caustic-opacity", "0.74");
+    container.style.setProperty("--prism-opacity", "0.72");
+  }
+
+  function computeBounds(rect, baseX, baseY) {
+    const margin = 8;
+    return {
+      minX: baseX + (margin - rect.left),
+      maxX: baseX + (window.innerWidth - margin - rect.right),
+      minY: baseY + (margin - rect.top),
+      maxY: baseY + (window.innerHeight - margin - rect.bottom),
+    };
+  }
+
+  function clampToViewport(x, y) {
+    const rect = container.getBoundingClientRect();
+    const bounds = computeBounds(rect, x, y);
+    return {
+      x: clamp(x, bounds.minX, bounds.maxX),
+      y: clamp(y, bounds.minY, bounds.maxY),
+    };
+  }
+
+  container.addEventListener("pointerdown", (event) => {
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      return;
+    }
+    if (event.button !== 0) {
+      return;
+    }
+    if (event.target.closest(interactiveSelector)) {
+      return;
+    }
+
+    state.dragging = true;
+    state.pointerId = event.pointerId;
+    state.startX = event.clientX;
+    state.startY = event.clientY;
+    state.baseX = state.x;
+    state.baseY = state.y;
+    state.bounds = computeBounds(container.getBoundingClientRect(), state.baseX, state.baseY);
+    container.classList.add("dragging");
+    container.setPointerCapture(event.pointerId);
+    applyOpticsFromPointer(event.clientX, event.clientY);
+  });
+
+  container.addEventListener("pointermove", (event) => {
+    if (!state.dragging || event.pointerId !== state.pointerId) {
+      return;
+    }
+
+    applyOpticsFromPointer(event.clientX, event.clientY);
+
+    const bounds = state.bounds || { minX: -9999, maxX: 9999, minY: -9999, maxY: 9999 };
+    const tentativeX = state.baseX + (event.clientX - state.startX);
+    const tentativeY = state.baseY + (event.clientY - state.startY);
+    const nextX = clamp(tentativeX, bounds.minX, bounds.maxX);
+    const nextY = clamp(tentativeY, bounds.minY, bounds.maxY);
+
+    applyDragVars(nextX, nextY);
+  });
+
+  function finishDrag(event) {
+    if (!state.dragging || (event && event.pointerId !== state.pointerId)) {
+      return;
+    }
+    state.dragging = false;
+    container.classList.remove("dragging");
+    resetTiltAndOptics();
+    if (state.pointerId !== null) {
+      try {
+        container.releasePointerCapture(state.pointerId);
+      } catch (_err) {
+        // ignore stale capture errors
+      }
+    }
+    state.pointerId = null;
+  }
+
+  container.addEventListener("pointerup", finishDrag);
+  container.addEventListener("pointercancel", finishDrag);
+  container.addEventListener("pointerleave", () => {
+    if (!state.dragging) {
+      resetTiltAndOptics();
+    }
+  });
+
+  window.addEventListener("resize", () => {
+    if (window.matchMedia("(max-width: 640px)").matches) {
+      applyDragVars(0, 0);
+      resetTiltAndOptics();
+      return;
+    }
+    const clamped = clampToViewport(state.x, state.y);
+    applyDragVars(clamped.x, clamped.y);
+    resetTiltAndOptics();
+  });
+
+  resetTiltAndOptics();
+}
 
 function renderPorts(ports, selectedPort) {
   const select = document.getElementById("serialPort");
@@ -60,17 +248,35 @@ function appendClientAlert(level, message) {
 }
 
 function setScreen(mode) {
+  const showConnect = mode === "connect";
+  const showPairing = mode === "pairing";
   const showRuntime = mode === "runtime";
+
   if (stateEls.connectScreen) {
-    stateEls.connectScreen.classList.toggle("screen-hidden", showRuntime);
+    stateEls.connectScreen.classList.toggle("screen-hidden", !showConnect);
+  }
+  if (stateEls.pairingScreen) {
+    stateEls.pairingScreen.classList.toggle("screen-hidden", !showPairing);
   }
   if (stateEls.runtimeScreen) {
     stateEls.runtimeScreen.classList.toggle("screen-hidden", !showRuntime);
   }
 }
 
+function phaseToScreen(phase) {
+  const value = String(phase || "idle");
+  if (value === "idle") return "connect";
+  if (value === "error") return "connect";
+  if (value === "streaming" || value === "stream_retrying") return "runtime";
+  return "pairing";
+}
+
 function renderRuntime(runtime) {
-  stateEls.phase.textContent = `Phase: ${runtime.phase || "idle"}`;
+  const phase = runtime.phase || "idle";
+  stateEls.phase.textContent = `Phase: ${phase}`;
+  if (stateEls.pairingPhase) {
+    stateEls.pairingPhase.textContent = `Phase: ${phase}`;
+  }
   const bypassEnabled = runtime.phase === "bypass_mode" || runtime.ssid === "(bypass)";
   if (stateEls.bypass) {
     stateEls.bypass.textContent = `Bypass Mode: ${bypassEnabled ? "on" : "off"}`;
@@ -81,6 +287,8 @@ function renderRuntime(runtime) {
   for (let i = 0; i < alerts.length; i += 1) {
     appendAlert(alerts[i]);
   }
+
+  setScreen(phaseToScreen(phase));
 }
 
 async function refreshRuntime() {
@@ -125,7 +333,7 @@ async function loadBootstrap() {
   toggle.checked = Boolean(data.tracking_enabled);
 
   const phase = (data.runtime && data.runtime.phase) || "idle";
-  setScreen(phase === "idle" ? "connect" : "runtime");
+  setScreen(phaseToScreen(phase));
 }
 
 document
@@ -146,6 +354,7 @@ document
 
     try {
       setConnectBusy(true);
+      setScreen("pairing");
       const runtime = await window.eyeApi.connectRuntime({
         ssid,
         password,
@@ -153,9 +362,9 @@ document
         baud: 115200,
       });
       renderRuntime(runtime);
-      setScreen("runtime");
     } catch (err) {
       appendClientAlert("error", `Connection failed: ${err.message}`);
+      setScreen("connect");
     } finally {
       setConnectBusy(false);
     }
@@ -168,6 +377,7 @@ document.getElementById("bypassButton").addEventListener("click", async () => {
 
   try {
     setConnectBusy(true);
+    setScreen("pairing");
     const runtime = await window.eyeApi.bypassRuntime({
       ssid,
       password,
@@ -175,13 +385,13 @@ document.getElementById("bypassButton").addEventListener("click", async () => {
       baud: 115200,
     });
     renderRuntime(runtime);
-    setScreen("runtime");
     appendClientAlert(
       "warning",
       "Bypass mode enabled: serial pairing was skipped. You can continue without a paired device.",
     );
   } catch (err) {
     appendClientAlert("error", `Bypass failed: ${err.message}`);
+    setScreen("connect");
   } finally {
     setConnectBusy(false);
   }
@@ -201,6 +411,15 @@ document
   });
 
 document.getElementById("backButton").addEventListener("click", () => {
+  document.getElementById("stopButton").click();
+});
+
+document.getElementById("cancelPairingButton").addEventListener("click", async () => {
+  try {
+    await window.eyeApi.stopRuntime();
+  } catch (_err) {
+    // best-effort cancellation
+  }
   setScreen("connect");
 });
 
@@ -215,6 +434,9 @@ document.getElementById("stopButton").addEventListener("click", async () => {
 });
 
 async function init() {
+  initWindowControls();
+  initInteractiveGlass();
+
   try {
     await loadBootstrap();
   } catch (err) {

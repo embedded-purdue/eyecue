@@ -16,6 +16,17 @@ class _FakeSerialContext:
 
 
 class PipelineControllerHandshakeTests(unittest.TestCase):
+    @patch("app.services.pipeline_controller.threading.Thread")
+    def test_connect_bypass_skips_required_field_validation(self, thread_cls_mock):
+        controller = PipelineController()
+
+        state = controller.connect(ssid="", password="", serial_port="", bypass=True)
+
+        self.assertEqual(state["phase"], "connecting_esp32")
+        self.assertEqual(state["ssid"], "(bypass)")
+        self.assertEqual(state["serial_port"], "(bypass)")
+        thread_cls_mock.assert_called_once()
+
     def test_provision_wifi_retries_then_succeeds(self):
         controller = PipelineController()
         fake_serial = _FakeSerialContext()

@@ -49,6 +49,7 @@
     listSerialPorts: () => request('/serial/ports'),
     getRuntimeState: () => request('/runtime/state'),
     connectRuntime: (payload) => request('/runtime/connect', { method: 'POST', body: payload }),
+    bypassRuntime: (payload = {}) => request('/runtime/bypass', { method: 'POST', body: payload }),
     setTracking: (enabled) => request('/runtime/tracking', { method: 'POST', body: { enabled: Boolean(enabled) } }),
     stopRuntime: () => request('/runtime/stop', { method: 'POST', body: {} }),
   };

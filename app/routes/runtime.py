@@ -43,6 +43,37 @@ def connect_runtime() -> tuple:
     return jsonify({"ok": True, "data": state}), 200
 
 
+@runtime_bp.route("/bypass", methods=["POST"])
+def bypass_runtime() -> tuple:
+    body = request.get_json(silent=True) or {}
+    serial_port = str(body.get("serial_port") or body.get("port") or "").strip()
+    ssid = str(body.get("ssid") or "").strip()
+    password = str(body.get("password") or "")
+    baud = int(body.get("baud") or 115200)
+
+    try:
+        state = pipeline_controller.connect(
+            ssid=ssid,
+            password=password,
+            serial_port=serial_port,
+            baud=baud,
+            bypass=True,
+        )
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    prefs = load_prefs()
+    if ssid:
+        prefs["wifi_ssid"] = ssid
+    if password:
+        prefs["wifi_password"] = password
+    if serial_port:
+        prefs["last_serial_port"] = serial_port
+    save_prefs(prefs)
+
+    return jsonify({"ok": True, "data": state}), 200
+
+
 @runtime_bp.route("/tracking", methods=["POST"])
 def set_tracking() -> tuple:
     body = request.get_json(silent=True) or {}

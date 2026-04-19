@@ -50,6 +50,9 @@ curl http://127.0.0.1:5051/health
 
 - `POST /runtime/connect`
   - JSON: `ssid`, `password`, `serial_port`, optional `baud`
+- `POST /runtime/bypass`
+  - JSON: optional `ssid`, `password`, `serial_port`, optional `baud`
+  - Skips serial provisioning and starts runtime in bypass mode.
 - `GET /runtime/state`
 - `POST /runtime/tracking`
   - JSON: `enabled` (boolean)

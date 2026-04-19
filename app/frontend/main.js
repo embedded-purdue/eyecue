@@ -143,12 +143,14 @@ async function ensureBackend() {
 }
 
 function createWindow() {
+  const appIconPath = path.join(__dirname, "assets", "eyecue-logo.png");
   mainWindow = new BrowserWindow({
     width: 860,
     height: 860,
     minWidth: 700,
     minHeight: 700,
     resizable: true,
+    icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,

@@ -98,6 +98,59 @@ class MinimalRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("serial_port is required", response.get_json()["error"])
 
+    @patch("app.routes.runtime.save_prefs")
+    @patch("app.routes.runtime.load_prefs")
+    @patch("app.routes.runtime.pipeline_controller.connect")
+    def test_runtime_bypass_allows_missing_fields(self, connect_mock, load_prefs_mock, save_prefs_mock):
+        load_prefs_mock.return_value = {"wifi_ssid": "old", "wifi_password": "old", "last_serial_port": "old"}
+        connect_mock.return_value = {
+            "phase": "bypass_mode",
+            "tracking_enabled": False,
+            "alerts": [],
+        }
+
+        response = self.client.post("/runtime/bypass", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.get_json()["ok"])
+        connect_mock.assert_called_once_with(
+            ssid="",
+            password="",
+            serial_port="",
+            baud=115200,
+            bypass=True,
+        )
+        save_prefs_mock.assert_called_once_with(
+            {"wifi_ssid": "old", "wifi_password": "old", "last_serial_port": "old"}
+        )
+
+    @patch("app.routes.runtime.save_prefs")
+    @patch("app.routes.runtime.load_prefs")
+    @patch("app.routes.runtime.pipeline_controller.connect")
+    def test_runtime_bypass_updates_prefs_when_fields_provided(self, connect_mock, load_prefs_mock, save_prefs_mock):
+        load_prefs_mock.return_value = {}
+        connect_mock.return_value = {
+            "phase": "bypass_mode",
+            "tracking_enabled": False,
+            "alerts": [],
+        }
+
+        response = self.client.post(
+            "/runtime/bypass",
+            json={
+                "ssid": "Velocity Wi-Fi",
+                "password": "secret",
+                "serial_port": "/dev/tty.usbmodem101",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        save_prefs_mock.assert_called_once_with(
+            {
+                "wifi_ssid": "Velocity Wi-Fi",
+                "wifi_password": "secret",
+                "last_serial_port": "/dev/tty.usbmodem101",
+            }
+        )
+
     @patch("app.routes.runtime.pipeline_controller.set_tracking")
     def test_runtime_tracking_toggle(self, set_tracking_mock):
         set_tracking_mock.return_value = {

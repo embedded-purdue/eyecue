@@ -113,14 +113,25 @@ class PipelineController:
             self._append_alert_locked("info", message)
             return self._snapshot_locked()
 
-    def connect(self, *, ssid: str, password: str, serial_port: str, baud: int = serial_connect.BAUD) -> Dict[str, Any]:
+    def connect(
+        self,
+        *,
+        ssid: str,
+        password: str,
+        serial_port: str,
+        baud: int = serial_connect.BAUD,
+        bypass: bool = False,
+    ) -> Dict[str, Any]:
         ssid = str(ssid or "").strip()
         password = str(password or "")
         serial_port = str(serial_port or "").strip()
-        if not ssid:
+        if not bypass and not ssid:
             raise ValueError("ssid is required")
-        if not serial_port:
+        if not bypass and not serial_port:
             raise ValueError("serial_port is required")
+
+        state_ssid = ssid or "(bypass)"
+        state_serial_port = serial_port or "(bypass)"
 
         self._stop_worker()
 
@@ -129,15 +140,24 @@ class PipelineController:
             self._stop_event.clear()
             self._state = PipelineState(
                 phase="connecting_esp32",
-                ssid=ssid,
-                serial_port=serial_port,
+                ssid=state_ssid,
+                serial_port=state_serial_port,
                 tracking_enabled=tracking_enabled,
             )
-            self._append_alert_locked("info", "Connecting to ESP32…")
+            if bypass:
+                self._append_alert_locked("warning", "Bypass mode requested. Skipping serial pairing.")
+            else:
+                self._append_alert_locked("info", "Connecting to ESP32…")
 
             self._worker = threading.Thread(
                 target=self._run_pipeline,
-                kwargs={"ssid": ssid, "password": password, "serial_port": serial_port, "baud": int(baud)},
+                kwargs={
+                    "ssid": ssid,
+                    "password": password,
+                    "serial_port": serial_port,
+                    "baud": int(baud),
+                    "bypass": bool(bypass),
+                },
                 daemon=True,
                 name="pipeline-controller",
             )
@@ -214,9 +234,19 @@ class PipelineController:
         all_lines.extend(lines)
         return True, ip_addr, device_error, nonce, all_lines
 
-    def _run_pipeline(self, *, ssid: str, password: str, serial_port: str, baud: int) -> None:
+    def _run_pipeline(self, *, ssid: str, password: str, serial_port: str, baud: int, bypass: bool = False) -> None:
         try:
-            ip_addr = self._provision_wifi(ssid=ssid, password=password, serial_port=serial_port, baud=baud)
+            ip_addr = (
+                "127.0.0.1:5052"
+                if bypass
+                else self._provision_wifi(ssid=ssid, password=password, serial_port=serial_port, baud=baud)
+            )
+            if bypass:
+                with self._lock:
+                    self._state.phase = "bypass_mode"
+                    self._state.esp32_ip = ip_addr
+                    self._state.last_error = None
+                    self._append_alert_locked("warning", "Bypass mode active. Using local fallback stream target.")
             if self._stop_event.is_set():
                 return
             self._stream_loop(ip_addr)

@@ -3,13 +3,17 @@
  */
 
 const stateEls = {
+  connectScreen: document.getElementById("connectScreen"),
+  runtimeScreen: document.getElementById("runtimeScreen"),
   phase: document.getElementById("phaseText"),
+  bypass: document.getElementById("bypassText"),
   frames: document.getElementById("framesText"),
   log: document.getElementById("statusLog"),
 };
 
 let pollingTimer = null;
 let renderedAlertId = 0;
+let lastPollErrorMessage = "";
 
 function renderPorts(ports, selectedPort) {
   const select = document.getElementById("serialPort");
@@ -26,6 +30,9 @@ function renderPorts(ports, selectedPort) {
 }
 
 function formatTime(ts_ms) {
+  if (!Number.isFinite(ts_ms)) {
+    return "--:--:--";
+  }
   const d = new Date(ts_ms);
 
   const hh = String(d.getHours()).padStart(2, "0");
@@ -41,7 +48,7 @@ function appendAlert(alert) {
   const entry = document.createElement("div");
   const formattedTime = formatTime(alert.ts_ms);
   entry.className = `status-entry ${alert.level || "info"}`;
-  entry.textContent = `${alert.message} [${formattedTime}]` || "";
+  entry.textContent = `${alert.message || "status update"} [${formattedTime}]`;
   stateEls.log.prepend(entry);
 }
 
@@ -52,8 +59,22 @@ function appendClientAlert(level, message) {
   stateEls.log.prepend(entry);
 }
 
+function setScreen(mode) {
+  const showRuntime = mode === "runtime";
+  if (stateEls.connectScreen) {
+    stateEls.connectScreen.classList.toggle("screen-hidden", showRuntime);
+  }
+  if (stateEls.runtimeScreen) {
+    stateEls.runtimeScreen.classList.toggle("screen-hidden", !showRuntime);
+  }
+}
+
 function renderRuntime(runtime) {
   stateEls.phase.textContent = `Phase: ${runtime.phase || "idle"}`;
+  const bypassEnabled = runtime.phase === "bypass_mode" || runtime.ssid === "(bypass)";
+  if (stateEls.bypass) {
+    stateEls.bypass.textContent = `Bypass Mode: ${bypassEnabled ? "on" : "off"}`;
+  }
   stateEls.frames.textContent = `Frames Processed: ${runtime.frames_processed || 0}`;
 
   const alerts = runtime.alerts || [];
@@ -65,13 +86,29 @@ function renderRuntime(runtime) {
 async function refreshRuntime() {
   try {
     const runtime = await window.eyeApi.getRuntimeState();
+    lastPollErrorMessage = "";
     renderRuntime(runtime);
     const toggle = document.getElementById("trackingToggle");
     if (toggle && toggle.checked !== Boolean(runtime.tracking_enabled)) {
       toggle.checked = Boolean(runtime.tracking_enabled);
     }
   } catch (err) {
-    appendClientAlert("error", `Runtime poll failed: ${err.message}`);
+    const message = `Runtime poll failed: ${err.message}`;
+    if (message !== lastPollErrorMessage) {
+      appendClientAlert("error", message);
+      lastPollErrorMessage = message;
+    }
+  }
+}
+
+function setConnectBusy(isBusy) {
+  const connectButton = document.getElementById("connectButton");
+  const bypassButton = document.getElementById("bypassButton");
+  if (connectButton) {
+    connectButton.disabled = Boolean(isBusy);
+  }
+  if (bypassButton) {
+    bypassButton.disabled = Boolean(isBusy);
   }
 }
 
@@ -86,6 +123,9 @@ async function loadBootstrap() {
 
   const toggle = document.getElementById("trackingToggle");
   toggle.checked = Boolean(data.tracking_enabled);
+
+  const phase = (data.runtime && data.runtime.phase) || "idle";
+  setScreen(phase === "idle" ? "connect" : "runtime");
 }
 
 document
@@ -105,6 +145,7 @@ document
     }
 
     try {
+      setConnectBusy(true);
       const runtime = await window.eyeApi.connectRuntime({
         ssid,
         password,
@@ -112,10 +153,39 @@ document
         baud: 115200,
       });
       renderRuntime(runtime);
+      setScreen("runtime");
     } catch (err) {
       appendClientAlert("error", `Connection failed: ${err.message}`);
+    } finally {
+      setConnectBusy(false);
     }
   });
+
+document.getElementById("bypassButton").addEventListener("click", async () => {
+  const ssid = document.getElementById("networkName").value.trim();
+  const password = document.getElementById("networkPassword").value;
+  const serialPort = document.getElementById("serialPort").value;
+
+  try {
+    setConnectBusy(true);
+    const runtime = await window.eyeApi.bypassRuntime({
+      ssid,
+      password,
+      serial_port: serialPort,
+      baud: 115200,
+    });
+    renderRuntime(runtime);
+    setScreen("runtime");
+    appendClientAlert(
+      "warning",
+      "Bypass mode enabled: serial pairing was skipped. You can continue without a paired device.",
+    );
+  } catch (err) {
+    appendClientAlert("error", `Bypass failed: ${err.message}`);
+  } finally {
+    setConnectBusy(false);
+  }
+});
 
 document
   .getElementById("trackingToggle")
@@ -129,6 +199,20 @@ document
       appendClientAlert("error", `Tracking update failed: ${err.message}`);
     }
   });
+
+document.getElementById("backButton").addEventListener("click", () => {
+  setScreen("connect");
+});
+
+document.getElementById("stopButton").addEventListener("click", async () => {
+  try {
+    const runtime = await window.eyeApi.stopRuntime();
+    renderRuntime(runtime);
+    setScreen("connect");
+  } catch (err) {
+    appendClientAlert("error", `Stop failed: ${err.message}`);
+  }
+});
 
 async function init() {
   try {

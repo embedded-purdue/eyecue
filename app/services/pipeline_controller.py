@@ -85,9 +85,8 @@ class PipelineController:
             self._state.alerts = self._state.alerts[-100:]
 
     def _emit_serial_debug(self, message: str) -> None:
-        if not SERIAL_DEBUG:
-            return
-        print(f"[serial] {message}", flush=True)
+        if SERIAL_DEBUG:
+            print(f"[serial] {message}", flush=True)
         with self._lock:
             self._append_alert_locked("info", message)
 

@@ -70,5 +70,5 @@ python3 -m app.app
 Tests:
 
 ```bash
-/Users/williamzhang/Documents/GitHub/eyecue/env/bin/python -m unittest discover -s app-tests -p "test_*.py"
+env/bin/python -m unittest discover -s app-tests -p "test_*.py"
 ```

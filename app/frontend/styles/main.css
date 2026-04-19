@@ -519,6 +519,10 @@ h2 {
     padding: 14px;
   }
 
+  .debug-panel {
+    margin-top: 18px;
+  }
+
   .container {
     padding: 18px 14px;
     border-radius: 18px;

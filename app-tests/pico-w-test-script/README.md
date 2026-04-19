@@ -63,7 +63,12 @@ Reset Pico W after upload.
 
 ## Run / Validate
 
-1. Start backend + Electron app.
+1. Start the desktop app:
+
+   ```bash
+   cd app/frontend
+   npm run start:desktop
+   ```
 2. Select Pico USB serial port in connect UI.
 3. Submit SSID/password once.
 4. Expect alert progression:

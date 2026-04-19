@@ -8,9 +8,7 @@
   <link rel="stylesheet" href="../styles/main.css">
 </head>
 <body>
-  <div class="window-drag-bar" aria-hidden="true">
-    <div class="window-drag-title">EyeCue</div>
-  </div>
+  <div class="window-drag-bar" aria-hidden="true"></div>
 
   <div class="container">
     <div class="glass-optics" aria-hidden="true">
@@ -76,14 +74,19 @@
     </div>
 
     <div class="status-panel debug-panel">
-      <div class="status-row" id="phaseText">Phase: idle</div>
-      <div class="status-row" id="bypassText">Bypass Mode: off</div>
-      <div class="status-row" id="ssidText">Network: --</div>
-      <div class="status-row" id="serialText">Serial Port: --</div>
-      <div class="status-row" id="ipText">ESP32 IP: --</div>
-      <div class="status-row" id="streamText">Stream URL: --</div>
-      <div class="status-row" id="errorText">Last Error: none</div>
-      <div class="status-row" id="framesText">Frames Processed: 0</div>
+      <div class="debug-meta">
+        <div class="status-row" id="phaseText">Phase: idle</div>
+        <div class="status-row" id="bypassText">Bypass Mode: off</div>
+        <div class="status-row" id="trackingText">Tracking Enabled: off</div>
+        <div class="status-row" id="ssidText">Network: --</div>
+        <div class="status-row" id="serialText">Serial Port: --</div>
+        <div class="status-row" id="ipText">ESP32 IP: --</div>
+        <div class="status-row" id="streamText">Stream URL: --</div>
+        <div class="status-row" id="lastFrameText">Last Frame: --:--:--</div>
+        <div class="status-row" id="alertsCountText">Alerts: 0</div>
+        <div class="status-row" id="errorText">Last Error: none</div>
+        <div class="status-row" id="framesText">Frames Processed: 0</div>
+      </div>
       <div class="status-log" id="statusLog"></div>
     </div>
   </div>

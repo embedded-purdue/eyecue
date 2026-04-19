@@ -24,38 +24,26 @@ body {
   align-items: center;
   justify-content: flex-start;
   min-height: 100vh;
-  padding: 68px 20px 36px;
+  padding: 48px 20px 28px;
 }
 
 .window-drag-bar {
   position: fixed;
-  top: 10px;
-  left: 14px;
-  right: 14px;
-  height: 42px;
-  border: 1px solid rgba(255, 255, 255, 0.7);
-  border-radius: 14px;
-  background: rgba(246, 251, 255, 0.16);
-  backdrop-filter: blur(20px) saturate(170%);
-  -webkit-backdrop-filter: blur(20px) saturate(170%);
+  top: 8px;
+  left: 12px;
+  right: 12px;
+  height: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: 10px;
+  background: rgba(246, 251, 255, 0.06);
+  backdrop-filter: blur(10px) saturate(128%);
+  -webkit-backdrop-filter: blur(10px) saturate(128%);
   box-shadow:
-    0 8px 20px rgba(20, 56, 98, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+    0 4px 12px rgba(20, 56, 98, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.38);
   -webkit-app-region: drag;
   user-select: none;
   z-index: 20;
-}
-
-.window-drag-title {
-  font-size: 13px;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(27, 62, 103, 0.84);
-  font-weight: 700;
-  -webkit-app-region: drag;
 }
 
 body::before {
@@ -474,11 +462,33 @@ h2 {
   min-height: 120px;
 }
 
+.debug-panel {
+  margin-top: 14px;
+  min-height: 150px;
+  max-height: 42vh;
+  overflow: auto;
+  resize: vertical;
+}
+
+.debug-meta {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 10px;
+}
+
+.debug-meta .status-row {
+  margin-bottom: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .status-log {
   margin-top: 10px;
   border-top: 1px solid rgba(192, 214, 240, 0.7);
   padding-top: 10px;
-  max-height: 220px;
+  max-height: 24vh;
+  min-height: 84px;
   overflow-y: auto;
 }
 
@@ -556,19 +566,25 @@ a {
 
 @media (max-width: 640px) {
   body {
-    padding: 58px 14px 14px;
+    padding: 42px 14px 14px;
   }
 
   .window-drag-bar {
     left: 10px;
     right: 10px;
-    top: 8px;
-    height: 38px;
-    border-radius: 12px;
+    top: 6px;
+    height: 16px;
+    border-radius: 8px;
   }
 
   .debug-panel {
-    margin-top: 18px;
+    margin-top: 12px;
+    min-height: 130px;
+    max-height: 46vh;
+  }
+
+  .debug-meta {
+    grid-template-columns: 1fr;
   }
 
   .container {

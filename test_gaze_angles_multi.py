@@ -385,8 +385,8 @@ class GazeAngleTesterMulti:
                     cv2.line(frame, pupil_center, stable_pupil_center, (255, 255, 0), 1)
             
             # draw roi rectangle
-            roi_x1, roi_y1 = int(w*0.2), int(h*0.3)
-            roi_x2, roi_y2 = int(w*0.8), int(h*0.8)
+            roi_x1, roi_y1 = int(w*0.25), int(h*0.3)
+            roi_x2, roi_y2 = int(w*0.75), int(h*0.75)
             cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 255, 0), 2)
             
             # show frame

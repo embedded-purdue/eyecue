@@ -15,6 +15,57 @@ from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
 
 
+def extract_contour_gaze_data(
+    pupil_center: Optional[Sequence[Union[int, float]]],
+    frame_shape: Sequence[int],
+) -> Optional[Dict[str, list]]:
+    """Convert pupil center to contour gaze vector/angles."""
+    if pupil_center is None:
+        return None
+
+    if not frame_shape or len(frame_shape) < 2:
+        return None
+
+    pupil_x, pupil_y = pupil_center
+    h = int(frame_shape[0])
+    w = int(frame_shape[1])
+    if h <= 0 or w <= 0:
+        return None
+
+    roi_width = int(w * 0.5)
+    roi_height = int(h * 0.45)
+    if roi_width <= 0 or roi_height <= 0:
+        return None
+
+    roi_center_x = int(w * 0.25) + roi_width // 2
+    roi_center_y = int(h * 0.3) + roi_height // 2
+
+    deviation_x = float(pupil_x) - roi_center_x
+    deviation_y = float(pupil_y) - roi_center_y
+
+    offset_x = deviation_x / roi_width
+    offset_y = -deviation_y / roi_height
+
+    eye_radius = 12.0
+    x_3d = offset_x * eye_radius
+    y_3d = offset_y * eye_radius
+    z_3d = math.sqrt(max(0.0, eye_radius**2 - x_3d**2 - y_3d**2))
+    gaze_vector = np.array([x_3d, y_3d, z_3d], dtype=np.float64)
+    gaze_norm = np.linalg.norm(gaze_vector)
+    if gaze_norm <= 0:
+        return None
+    gaze_vector = gaze_vector / gaze_norm
+
+    theta_h = math.degrees(math.atan2(gaze_vector[0], gaze_vector[2]))
+    theta_v = math.degrees(math.atan2(gaze_vector[1], gaze_vector[2]))
+
+    return {
+        "single_gaze_vector": gaze_vector.tolist(),
+        "single_angles": [theta_h, theta_v],
+        "single_offset": [offset_x, offset_y],
+    }
+
+
 def map_gaze_angles_to_screen(
     angle_h: float,
     angle_v: float,
@@ -345,8 +396,8 @@ class ContourGazeTracker:
             
             # draw roi rectangle (always visible)
             h, w = frame.shape[:2]
-            roi_x1, roi_y1 = int(w*0.2), int(h*0.3)
-            roi_x2, roi_y2 = int(w*0.8), int(h*0.8)
+            roi_x1, roi_y1 = int(w*0.25), int(h*0.3)
+            roi_x2, roi_y2 = int(w*0.75), int(h*0.75)
             cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 255, 0), 2)
             
             # display metrics on frame

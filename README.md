@@ -52,8 +52,11 @@ python3 contour_gaze_tracker.py --camera http://192.168.4.49/stream
 # record video
 python3 contour_gaze_tracker.py --camera 0 --output test.mp4
 
-# init web app
-python -m app.app
+# desktop app (recommended)
+cd app/frontend && npm run start:desktop
+
+# backend-only fallback (development diagnostics)
+python3 -m app.app
 ```
 
 Desktop app entrypoint (recommended):

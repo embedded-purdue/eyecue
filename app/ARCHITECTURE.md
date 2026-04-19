@@ -54,21 +54,21 @@ Alert entry shape:
 
 ## Run
 
-Backend only:
+Desktop app (recommended):
+
+```bash
+cd app/frontend
+npm run start:desktop
+```
+
+Backend-only fallback:
 
 ```bash
 python3 -m app.app
 ```
 
-Electron:
-
-```bash
-cd app/frontend
-npm start
-```
-
 Tests:
 
 ```bash
-python3 -m unittest discover app-tests
+/Users/williamzhang/Documents/GitHub/eyecue/env/bin/python -m unittest discover -s app-tests -p "test_*.py"
 ```

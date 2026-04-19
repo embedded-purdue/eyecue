@@ -2,10 +2,144 @@
 """
 standalone pupil detection module using contour analysis
 - extracted from contour_gaze_tracker.py for reuse across modules
+- handles corneal reflections, low-contrast eyes, and varying lighting
 """
 
 import cv2
 import numpy as np
+
+
+def _remove_reflections(roi_gray):
+    """
+    remove specular reflections (corneal glints) from the eye roi.
+    reflections are small, very bright spots that break up the dark pupil region.
+    we detect them and inpaint over them with surrounding intensity.
+    """
+    # find very bright spots (top ~5% intensity or anything near white)
+    bright_thresh = max(200, np.percentile(roi_gray, 95))
+    _, bright_mask = cv2.threshold(roi_gray, bright_thresh, 255, cv2.THRESH_BINARY)
+
+    # dilate the bright spots slightly so inpainting covers them fully
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+    bright_mask = cv2.dilate(bright_mask, kernel, iterations=1)
+
+    # inpaint over reflections
+    cleaned = cv2.inpaint(roi_gray, bright_mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    return cleaned
+
+
+def _enhance_contrast(roi_gray):
+    """
+    apply CLAHE (contrast-limited adaptive histogram equalization) to boost
+    pupil-iris contrast, which is often very low in camera feeds.
+    """
+    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(4, 4))
+    return clahe.apply(roi_gray)
+
+
+def _find_candidates(roi_processed, roi_raw, roi_area, min_area=8, max_area_ratio=0.40,
+                     aspect_lo=0.3, aspect_hi=3.0):
+    """
+    threshold, clean, find contours, and score them.
+    tries multiple threshold levels and merges the candidate lists.
+    """
+    mean_val = np.mean(roi_processed)
+    min_val = np.min(roi_processed)
+
+    # build a set of thresholds to try — more chances to capture the pupil
+    thresholds = []
+    if min_val > 80:
+        # overexposed: try several cuts relative to the mean
+        thresholds = [mean_val * f for f in (0.75, 0.65, 0.55)]
+    else:
+        # normal: range from conservative to aggressive
+        base = max(25, mean_val * 0.4)
+        thresholds = [base, base * 1.3, base * 0.7]
+
+    # also always try an Otsu threshold as a safety net
+    otsu_val, _ = cv2.threshold(roi_processed, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    thresholds.append(otsu_val)
+
+    # deduplicate and sort
+    thresholds = sorted(set(int(t) for t in thresholds if 5 < t < 250))
+
+    seen_centroids = set()  # avoid near-duplicate contours across thresholds
+    candidates = []
+
+    for thresh_val in thresholds:
+        _, thresh = cv2.threshold(roi_processed, thresh_val, 255, cv2.THRESH_BINARY_INV)
+
+        # morphological cleanup — close first to merge reflection-split fragments,
+        # then open to remove noise
+        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            area = cv2.contourArea(contour)
+
+            # relaxed size filter
+            if area < min_area or area > roi_area * max_area_ratio:
+                continue
+
+            x, y, w_box, h_box = cv2.boundingRect(contour)
+            if h_box == 0:
+                continue
+            aspect_ratio = float(w_box) / h_box
+
+            # relaxed aspect ratio — pupils can look elliptical from an angle
+            if aspect_ratio < aspect_lo or aspect_ratio > aspect_hi:
+                continue
+
+            # compute centroid for dedup
+            M = cv2.moments(contour)
+            if M["m00"] != 0:
+                cx = int(M["m10"] / M["m00"])
+                cy = int(M["m01"] / M["m00"])
+            else:
+                cx = x + w_box // 2
+                cy = y + h_box // 2
+
+            # skip near-duplicate centroids (within 5px) from different thresholds
+            centroid_key = (cx // 5, cy // 5)
+            if centroid_key in seen_centroids:
+                continue
+            seen_centroids.add(centroid_key)
+
+            # mean intensity of this blob in the original (non-enhanced) roi
+            mask = np.zeros(roi_raw.shape, dtype=np.uint8)
+            cv2.drawContours(mask, [contour], -1, 255, -1)
+            mean_intensity = cv2.mean(roi_raw, mask=mask)[0]
+
+            # circularity
+            perimeter = cv2.arcLength(contour, True)
+            if perimeter == 0:
+                continue
+            circularity = 4 * np.pi * area / (perimeter * perimeter)
+
+            # scoring: darkness is most important, circularity is a bonus,
+            # and area gets a small bonus (prefer larger blobs — the real pupil
+            # is usually the largest dark blob)
+            darkness_score = (255 - mean_intensity) * 0.5
+            circularity_score = circularity * 50 * 0.25
+            area_score = min(area / roi_area * 100, 15) * 0.25  # caps at 15 points
+            score = darkness_score + circularity_score + area_score
+
+            candidates.append({
+                'contour': contour,
+                'score': score,
+                'mean_intensity': mean_intensity,
+                'area': area,
+                'circularity': circularity,
+                'aspect_ratio': aspect_ratio,
+                'thresh_val': thresh_val,
+            })
+
+    candidates.sort(key=lambda c: c['score'], reverse=True)
+    return candidates
+
 
 def detect_pupil_contour(frame):
     """pupil detection using darkest region with size filtering"""
@@ -21,97 +155,35 @@ def detect_pupil_contour(frame):
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     print(f"[DEBUG] Gray shape: {gray.shape}, min: {gray.min()}, max: {gray.max()}")
     
-    # crop roi ~ single eye area (smaller, more focused)
+    # crop roi — wider region to avoid clipping the pupil near edges
     h, w = gray.shape
-    roi = gray[int(h*0.4):int(h*0.7), int(w*0.35):int(w*0.65)]
+    roi = gray[int(h*0.3):int(h*0.75), int(w*0.25):int(w*0.75)]
     print(f"[DEBUG] ROI shape: {roi.shape}")
 
-    # apply slight blur to reduce noise
-    blurred = cv2.GaussianBlur(roi, (3, 3), 0)
+    # remove specular reflections before processing
+    cleaned = _remove_reflections(roi)
 
-    # use adaptive threshold based on image brightness
-    # For bright images (like overexposed streams), use a more aggressive threshold
-    mean_intensity = np.mean(blurred)
-    min_intensity = np.min(blurred)
+    # enhance contrast so the pupil stands out
+    enhanced = _enhance_contrast(cleaned)
 
-    # If the darkest pixel is still quite bright (>80), the image is overexposed
-    # Use a higher threshold percentage to still capture the relatively darker regions
-    if min_intensity > 80:
-        # Overexposed - use 65% of mean to capture the pupil
-        threshold_value = mean_intensity * 0.65
-        print(f"[DEBUG] OVEREXPOSED image detected (min={min_intensity})")
-    else:
-        # Normal exposure - use conservative threshold
-        threshold_value = max(30, mean_intensity * 0.4)
+    # apply blur to reduce noise (on the enhanced image)
+    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
-    print(f"[DEBUG] Mean intensity: {mean_intensity:.1f}, Min: {min_intensity}, Threshold: {threshold_value:.1f}")
-    _, thresh = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
-    
-    # morphological operations to clean up - remove small noise
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-    
-    # find contours
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    print(f"[DEBUG] Found {len(contours)} contours")
-
-    if not contours:
-        print("[DEBUG] No contours found - returning None")
-        return None, None, None
-    
     roi_h, roi_w = roi.shape
     roi_area = roi_h * roi_w
-    
-    # filter and score contours
-    candidates = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        
-        # size filter: pupil should be reasonably sized (not too small, not iris-sized)
-        if area < 20 or area > roi_area * 0.25:  # 20-25% of roi max
-            continue
-        
-        # get bounding box for aspect ratio check
-        x, y, w_box, h_box = cv2.boundingRect(contour)
-        aspect_ratio = float(w_box) / h_box if h_box > 0 else 0
-        
-        # pupil should be roughly round (not elongated like eyelashes)
-        if aspect_ratio < 0.5 or aspect_ratio > 2.0:
-            continue
-        
-        # get mean intensity of this region (pupil should be very dark)
-        mask = np.zeros(roi.shape, dtype=np.uint8)
-        cv2.drawContours(mask, [contour], -1, 255, -1)
-        mean_intensity = cv2.mean(blurred, mask=mask)[0]
-        
-        # calculate circularity
-        perimeter = cv2.arcLength(contour, True)
-        if perimeter == 0:
-            continue
-        circularity = 4 * np.pi * area / (perimeter * perimeter)
-        
-        # prefer darker, more circular, reasonably sized blobs
-        # weight darkness more heavily
-        score = (255 - mean_intensity) * 0.7 + circularity * 50 * 0.3
-        
-        candidates.append({
-            'contour': contour,
-            'score': score,
-            'mean_intensity': mean_intensity,
-            'area': area
-        })
-    
-    print(f"[DEBUG] After filtering: {len(candidates)} valid candidates")
+
+    # find candidates using multi-threshold approach
+    candidates = _find_candidates(blurred, roi, roi_area)
+
+    print(f"[DEBUG] Found {len(candidates)} valid candidates")
 
     if not candidates:
-        print("[DEBUG] No valid candidates after filtering - returning None")
+        print("[DEBUG] No valid candidates - returning None")
         return None, None, None
 
-    # sort by score and take the best one
-    candidates.sort(key=lambda x: x['score'], reverse=True)
     best = candidates[0]
-    print(f"[DEBUG] Best candidate - score: {best['score']:.1f}, area: {best['area']:.0f}, intensity: {best['mean_intensity']:.1f}")
+    print(f"[DEBUG] Best candidate - score: {best['score']:.1f}, area: {best['area']:.0f}, "
+          f"intensity: {best['mean_intensity']:.1f}, circularity: {best['circularity']:.2f}")
     
     # use moments for accurate center
     M = cv2.moments(best['contour'])
@@ -126,9 +198,9 @@ def detect_pupil_contour(frame):
     # get bounding box
     x, y, w_box, h_box = cv2.boundingRect(best['contour'])
     
-    # convert to full frame coords
-    full_cx = cx + int(w*0.35)
-    full_cy = cy + int(h*0.4)
+    # convert to full frame coords (matching the wider ROI offsets)
+    full_cx = cx + int(w*0.25)
+    full_cy = cy + int(h*0.3)
 
     print(f"[DEBUG] SUCCESS - Pupil detected at ({full_cx}, {full_cy})")
     print("-" * 60)
@@ -165,76 +237,26 @@ def detect_pupil_contour_candidates(frame):
     # convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-    # crop roi ~ single eye area (same region as detect_pupil_contour)
+    # crop roi — wider region (matches detect_pupil_contour)
     h, w = gray.shape
-    roi_offset_x = int(w * 0.35)
-    roi_offset_y = int(h * 0.4)
-    roi = gray[int(h * 0.4):int(h * 0.7), int(w * 0.35):int(w * 0.65)]
+    roi_offset_x = int(w * 0.25)
+    roi_offset_y = int(h * 0.3)
+    roi = gray[int(h * 0.3):int(h * 0.75), int(w * 0.25):int(w * 0.75)]
 
-    # apply slight blur to reduce noise
-    blurred = cv2.GaussianBlur(roi, (3, 3), 0)
+    # remove specular reflections
+    cleaned = _remove_reflections(roi)
 
-    # adaptive threshold based on image brightness
-    mean_val = np.mean(blurred)
-    min_val = np.min(blurred)
+    # enhance contrast
+    enhanced = _enhance_contrast(cleaned)
 
-    if min_val > 80:
-        threshold_value = mean_val * 0.65
-    else:
-        threshold_value = max(30, mean_val * 0.4)
-
-    _, thresh = cv2.threshold(blurred, threshold_value, 255, cv2.THRESH_BINARY_INV)
-
-    # morphological operations to clean up
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
-    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=2)
-
-    # find contours
-    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    if not contours:
-        empty['roi_offset_x'] = roi_offset_x
-        empty['roi_offset_y'] = roi_offset_y
-        return empty
+    # blur
+    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
 
     roi_h, roi_w = roi.shape
     roi_area = roi_h * roi_w
 
-    # filter and score contours
-    candidates = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-
-        # size filter
-        if area < 20 or area > roi_area * 0.25:
-            continue
-
-        x, y, w_box, h_box = cv2.boundingRect(contour)
-        aspect_ratio = float(w_box) / h_box if h_box > 0 else 0
-
-        if aspect_ratio < 0.5 or aspect_ratio > 2.0:
-            continue
-
-        mask = np.zeros(roi.shape, dtype=np.uint8)
-        cv2.drawContours(mask, [contour], -1, 255, -1)
-        mean_intensity = cv2.mean(blurred, mask=mask)[0]
-
-        perimeter = cv2.arcLength(contour, True)
-        if perimeter == 0:
-            continue
-        circularity = 4 * np.pi * area / (perimeter * perimeter)
-
-        score = (255 - mean_intensity) * 0.7 + circularity * 50 * 0.3
-
-        candidates.append({
-            'contour': contour,
-            'score': score,
-            'mean_intensity': mean_intensity,
-            'area': area,
-        })
-
-    candidates.sort(key=lambda x: x['score'], reverse=True)
+    # find candidates using multi-threshold approach
+    candidates = _find_candidates(blurred, roi, roi_area)
 
     result = {
         'candidates': candidates,

@@ -32,12 +32,12 @@ def extract_contour_gaze_data(
     if h <= 0 or w <= 0:
         return None
 
-    roi_width = int(w * 0.6)
-    roi_height = int(h * 0.5)
+    roi_width = int(w * 0.5)
+    roi_height = int(h * 0.45)
     if roi_width <= 0 or roi_height <= 0:
         return None
 
-    roi_center_x = int(w * 0.2) + roi_width // 2
+    roi_center_x = int(w * 0.25) + roi_width // 2
     roi_center_y = int(h * 0.3) + roi_height // 2
 
     deviation_x = float(pupil_x) - roi_center_x
@@ -354,8 +354,8 @@ class ContourGazeTracker:
             
             # draw roi rectangle (always visible)
             h, w = frame.shape[:2]
-            roi_x1, roi_y1 = int(w*0.2), int(h*0.3)
-            roi_x2, roi_y2 = int(w*0.8), int(h*0.8)
+            roi_x1, roi_y1 = int(w*0.25), int(h*0.3)
+            roi_x2, roi_y2 = int(w*0.75), int(h*0.75)
             cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 255, 0), 2)
             
             # display metrics on frame

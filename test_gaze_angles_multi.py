@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 test script to visualize gaze angles and screen position
+- shows top 10-15 contour candidates overlaid on the eye
 """
 
 import cv2
@@ -9,7 +10,30 @@ import math
 import time
 import pyautogui
 from contour_gaze_tracker import ContourGazeTracker, ESP32CameraCapture
-from pupil_detector import detect_pupil_contour
+from pupil_detector import detect_pupil_contour_candidates
+
+# ── color palette for ranking candidates (index 0 = best) ──────────────
+# green → yellow → orange → red → purple → blue as rank worsens
+CANDIDATE_COLORS = [
+    (0, 255, 0),      # 1  - bright green (best)
+    (0, 230, 50),     # 2  - green
+    (0, 200, 100),    # 3  - green-teal
+    (0, 255, 255),    # 4  - yellow
+    (0, 200, 255),    # 5  - light orange
+    (0, 165, 255),    # 6  - orange
+    (0, 120, 255),    # 7  - dark orange
+    (0, 80, 255),     # 8  - red-orange
+    (0, 0, 255),      # 9  - red
+    (50, 0, 220),     # 10 - dark red
+    (128, 0, 200),    # 11 - purple
+    (200, 0, 180),    # 12 - magenta
+    (255, 0, 128),    # 13 - pink
+    (255, 100, 50),   # 14 - blue-ish
+    (255, 150, 0),    # 15 - deep blue
+]
+
+MAX_CANDIDATES = 15
+
 
 def angles_to_screen_coords_cursorcontroller(angle_h, angle_v, screen_width, screen_height, 
                                                screen_distance_pixels=None, 
@@ -128,8 +152,79 @@ def draw_screen_overlay(overlay_img, screen_width, screen_height, gaze_point):
                 (overlay_x, overlay_y + crosshair_size),
                 (0, 0, 255), 2)
 
-class GazeAngleTester:
-    """test script that shows video, angles, and screen position"""
+
+def draw_candidates_on_frame(frame, candidates, roi_offset_x, roi_offset_y):
+    """
+    draw contour candidates on the frame, color-coded by rank.
+    
+    candidates are already sorted best-to-worst.
+    roi_offset_x / roi_offset_y translate roi-local coords to full frame coords.
+    """
+    n = min(len(candidates), MAX_CANDIDATES)
+    
+    for rank in range(n):
+        cand = candidates[rank]
+        contour = cand['contour']
+        color = CANDIDATE_COLORS[rank]
+        
+        # shift contour to full-frame coordinates
+        shifted = contour.copy()
+        shifted[:, :, 0] += roi_offset_x
+        shifted[:, :, 1] += roi_offset_y
+        
+        # draw contour outline – thicker for top-ranked, thinner for lower
+        thickness = 3 if rank == 0 else 2 if rank < 3 else 1
+        cv2.drawContours(frame, [shifted], -1, color, thickness)
+        
+        # label with rank number near the contour centroid
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"]) + roi_offset_x
+            cy = int(M["m01"] / M["m00"]) + roi_offset_y
+        else:
+            x, y, w_box, h_box = cv2.boundingRect(contour)
+            cx = x + w_box // 2 + roi_offset_x
+            cy = y + h_box // 2 + roi_offset_y
+        
+        label = f"#{rank+1}"
+        font_scale = 0.45 if rank == 0 else 0.35
+        # text shadow for readability
+        cv2.putText(frame, label, (cx + 1, cy + 1),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), 2)
+        cv2.putText(frame, label, (cx, cy),
+                    cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, 1)
+
+
+def draw_candidate_legend(frame, candidates):
+    """draw a small legend panel in the top-right showing candidate stats."""
+    n = min(len(candidates), MAX_CANDIDATES)
+    h, w = frame.shape[:2]
+    
+    panel_w = 260
+    panel_h = 22 * n + 30
+    x0 = w - panel_w - 10
+    y0 = 10
+    
+    # semi-transparent background
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (x0, y0), (x0 + panel_w, y0 + panel_h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.6, frame, 0.4, 0, frame)
+    
+    # header
+    cv2.putText(frame, "Candidates (score / area / int)", (x0 + 5, y0 + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
+    
+    for i in range(n):
+        c = candidates[i]
+        color = CANDIDATE_COLORS[i]
+        ty = y0 + 34 + i * 22
+        text = f"#{i+1}: scr={c['score']:.1f}  a={c['area']:.0f}  i={c['mean_intensity']:.0f}"
+        cv2.putText(frame, text, (x0 + 5, ty),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
+
+
+class GazeAngleTesterMulti:
+    """test script that shows video, angles, screen position, and top contour candidates"""
     def __init__(self, camera_index=0, screen_distance_mm=600):
         self.camera_index = camera_index
         self.screen_distance_mm = screen_distance_mm
@@ -172,9 +267,9 @@ class GazeAngleTester:
             else:
                 print(f"[info] Processing video file: {self.camera_index}")
         
-        print("[info] Starting gaze angle test visualization...")
+        print("[info] Starting multi-candidate gaze angle test visualization...")
         print("[info] This will show:")
-        print("  1. Video with tracker overlays")
+        print("  1. Video with TOP 10-15 contour candidates overlaid")
         print("  2. Gaze angles displayed on frame")
         print("  3. Screen overlay showing where you're looking")
         print(f"[info] Screen size: {self.screen_width}x{self.screen_height}")
@@ -183,9 +278,6 @@ class GazeAngleTester:
         # create overlay window in main thread
         overlay_size = (800, 600)
         overlay_img = np.zeros((overlay_size[1], overlay_size[0], 3), dtype=np.uint8)
-        
-        # create video window explicitly
-        # cv2.namedWindow("Gaze Tracker - Video Input", cv2.WINDOW_NORMAL)
         
         # get first frame
         if self.esp32_capture:
@@ -221,8 +313,14 @@ class GazeAngleTester:
             
             self.frame_count += 1
             
-            # detect pupil
-            pupil_center, roi_center, bbox = detect_pupil_contour(frame)
+            # detect pupil — get ALL candidates instead of just the best
+            result = detect_pupil_contour_candidates(frame)
+            pupil_center = result['pupil_center']
+            roi_center = result['roi_center']
+            bbox = result['bbox']
+            candidates = result['candidates']  # sorted best-to-worst
+            roi_offset_x = result['roi_offset_x']
+            roi_offset_y = result['roi_offset_y']
             
             # stabilize pupil position
             if pupil_center is not None:
@@ -261,6 +359,7 @@ class GazeAngleTester:
                     screen_x, screen_y = self.gaze_point
                     
                     print(f"Frame {self.frame_count:5d} | "
+                          f"Candidates: {len(candidates):2d} | "
                           f"Gaze Vector: [{gaze_vector[0]:7.4f}, {gaze_vector[1]:7.4f}, {gaze_vector[2]:7.4f}] | "
                           f"Angles: H={angle_h:7.2f}°, V={angle_v:7.2f}° | "
                           f"Offset: [{offset[0]:6.3f}, {offset[1]:6.3f}] | "
@@ -271,9 +370,15 @@ class GazeAngleTester:
             # draw on frame
             h, w = frame.shape[:2]
             
-            # draw pupil detection
+            # ── draw ALL candidate contours on the eye ──────────────
+            if candidates:
+                draw_candidates_on_frame(frame, candidates, roi_offset_x, roi_offset_y)
+                draw_candidate_legend(frame, candidates)
+            
+            # draw smoothed pupil center (on top of contours)
             if stable_pupil_center:
-                cv2.circle(frame, stable_pupil_center, 5, (0, 255, 0), -1)
+                cv2.circle(frame, stable_pupil_center, 6, (255, 255, 255), 2)
+                cv2.circle(frame, stable_pupil_center, 3, (0, 255, 0), -1)
             if pupil_center:
                 cv2.circle(frame, pupil_center, 3, (0, 0, 255), 2)
                 if stable_pupil_center:
@@ -287,7 +392,7 @@ class GazeAngleTester:
             # show frame
             try:
                 if frame is not None and frame.size > 0:
-                    cv2.imshow("Gaze Tracker - Video Input", frame)
+                    cv2.imshow("Multi-Candidate Gaze Tracker", frame)
                 else:
                     print(f"[warning] Invalid frame at frame {self.frame_count}")
             except Exception as e:
@@ -334,11 +439,11 @@ class GazeAngleTester:
         else:
             cap.release()
         cv2.destroyAllWindows()
-        print("[info] Gaze angle test stopped")
+        print("[info] Multi-candidate gaze angle test stopped")
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='Test gaze angles with visualization')
+    parser = argparse.ArgumentParser(description='Test gaze angles with multi-candidate visualization')
     parser.add_argument('--camera', type=str, default='0',
                        help='Camera index (int), video file path, or ESP32 stream URL')
     parser.add_argument('--distance', type=float, default=600,
@@ -351,9 +456,8 @@ def main():
     except ValueError:
         camera_input = args.camera
     
-    tester = GazeAngleTester(camera_index=camera_input, screen_distance_mm=args.distance)
+    tester = GazeAngleTesterMulti(camera_index=camera_input, screen_distance_mm=args.distance)
     tester.run()
 
 if __name__ == '__main__':
     main()
-

@@ -8,7 +8,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 import cv2
 import numpy as np
 
-from contour_gaze_tracker import extract_contour_gaze_data, map_gaze_angles_to_screen
+from contour_gaze_tracker import ContourGazeTracker, map_gaze_angles_to_screen
 from pupil_detector import detect_pupil_contour
 
 try:
@@ -45,6 +45,10 @@ class ContourPupilFrameProcessor:
         self._last_cursor_x = 0
         self._last_cursor_y = 0
         self._has_last_cursor = False
+        self._frame_count = 0
+        self._smoothed_pupil_center: Optional[Tuple[int, int]] = None
+        self._smoothing_alpha = 0.3
+        self._gaze_tracker = ContourGazeTracker(enable_metrics=False, quiet=True)
 
     @staticmethod
     def _default_screen_size_provider() -> Tuple[int, int]:
@@ -163,6 +167,25 @@ class ContourPupilFrameProcessor:
             and full_center[0] is not None
             and full_center[1] is not None
         )
+        self._frame_count += 1
+
+        if has_detection:
+            raw_center = (int(full_center[0]), int(full_center[1]))
+            if self._smoothed_pupil_center is None:
+                self._smoothed_pupil_center = raw_center
+            else:
+                self._smoothed_pupil_center = (
+                    int(
+                        self._smoothing_alpha * raw_center[0]
+                        + (1 - self._smoothing_alpha) * self._smoothed_pupil_center[0]
+                    ),
+                    int(
+                        self._smoothing_alpha * raw_center[1]
+                        + (1 - self._smoothing_alpha) * self._smoothed_pupil_center[1]
+                    ),
+                )
+        elif self._frame_count % 10 == 0 and self._smoothed_pupil_center is not None:
+            self._smoothed_pupil_center = None
 
         diagnostics: Dict[str, Any] = {
             "stage": "contour_pupil",
@@ -174,15 +197,18 @@ class ContourPupilFrameProcessor:
         }
 
         if has_detection:
-            x_frame = int(full_center[0])
-            y_frame = int(full_center[1])
+            stable_pupil_center = self._smoothed_pupil_center
+            if stable_pupil_center is None:
+                stable_pupil_center = (int(full_center[0]), int(full_center[1]))
+            x_frame = int(stable_pupil_center[0])
+            y_frame = int(stable_pupil_center[1])
             cursor_x: Optional[int] = None
             cursor_y: Optional[int] = None
             gaze_data: Optional[Dict[str, Any]] = None
             gaze_error: Optional[str] = None
 
             try:
-                gaze_data = extract_contour_gaze_data((x_frame, y_frame), frame.shape)
+                gaze_data = self._gaze_tracker.extract_gaze_numbers((x_frame, y_frame), _roi_center, frame.shape)
                 if not gaze_data:
                     gaze_error = "gaze_data_unavailable"
                 else:

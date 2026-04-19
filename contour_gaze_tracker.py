@@ -10,7 +10,7 @@ import numpy as np
 import math
 import time
 import requests
-from typing import Dict, Optional, Sequence, Tuple, Union
+from typing import Optional, Tuple
 from pupil_detector import detect_pupil_contour
 from metrics_collector import MetricsCollector
 
@@ -32,12 +32,12 @@ def extract_contour_gaze_data(
     if h <= 0 or w <= 0:
         return None
 
-    roi_width = int(w * 0.6)
-    roi_height = int(h * 0.5)
+    roi_width = int(w * 0.5)
+    roi_height = int(h * 0.45)
     if roi_width <= 0 or roi_height <= 0:
         return None
 
-    roi_center_x = int(w * 0.2) + roi_width // 2
+    roi_center_x = int(w * 0.25) + roi_width // 2
     roi_center_y = int(h * 0.3) + roi_height // 2
 
     deviation_x = float(pupil_x) - roi_center_x
@@ -192,10 +192,11 @@ class ESP32CameraCapture:
             self.cap = None
 
 class ContourGazeTracker:
-    def __init__(self, output_video=None, enable_metrics=True, metrics_save_interval=100):
+    def __init__(self, output_video=None, enable_metrics=True, metrics_save_interval=100, quiet=False):
         self.frame_count = 0
         self.esp32_capture = None
         self.is_local_camera = False
+        self.quiet = bool(quiet)
         # stabilization: smoothed pupil position
         self.smoothed_pupil_center = None
         self.smoothing_alpha = 0.3  # lower = more smoothing (0.0-1.0)
@@ -205,18 +206,59 @@ class ContourGazeTracker:
         # metrics collection
         self.enable_metrics = enable_metrics
         self.metrics = MetricsCollector(save_interval=metrics_save_interval) if enable_metrics else None
-        print("contour gaze tracker - press 'q' to quit")
-        print("output: 3d gaze vectors and angles every 30 frames")
-        if output_video:
-            print(f"[info] recording video to: {output_video}")
-        if enable_metrics:
-            print(f"[info] metrics collection enabled (prints every {metrics_save_interval} frames)")
+        if not self.quiet:
+            print("contour gaze tracker - press 'q' to quit")
+            print("output: 3d gaze vectors and angles every 30 frames")
+            if output_video:
+                print(f"[info] recording video to: {output_video}")
+            if enable_metrics:
+                print(f"[info] metrics collection enabled (prints every {metrics_save_interval} frames)")
 
 
     def extract_gaze_numbers(self, pupil_center, roi_center, frame_shape):
         """extract 3d gaze vectors and angles - same format as mediapipe version"""
-        _ = roi_center  # ROI center is intentionally ignored in contour implementation.
-        return extract_contour_gaze_data(pupil_center, frame_shape)
+        
+        if pupil_center is None:
+            return None
+        
+        # get pupil coords
+        pupil_x, pupil_y = pupil_center
+        
+        # calc exact roi center (middle of roi) - roi_center parameter is not used
+        h, w = frame_shape[:2]
+        roi_width = int(w * 0.6)  # roi width
+        roi_height = int(h * 0.5)  # roi height
+        roi_center_x = int(w * 0.2) + roi_width // 2  # exact center of roi
+        roi_center_y = int(h * 0.3) + roi_height // 2  # exact center of roi
+        
+        # calc deviation from roi center (in pixels)
+        deviation_x = pupil_x - roi_center_x
+        deviation_y = pupil_y - roi_center_y
+        
+        # normalize by roi dimensions - simple x-y plane
+        offset_x = deviation_x / roi_width
+        offset_y = -deviation_y / roi_height  # flip y so top = positive
+        
+        # convert to 3d gaze vectors (assuming 12mm eye radius)
+        eye_radius = 12.0
+        
+        # single eye 3d vector
+        x_3d = offset_x * eye_radius
+        y_3d = offset_y * eye_radius
+        z_3d = math.sqrt(max(0, eye_radius**2 - x_3d**2 - y_3d**2))
+        gaze_vector = np.array([x_3d, y_3d, z_3d])
+        gaze_vector = gaze_vector / np.linalg.norm(gaze_vector)
+        
+        # calc angles (in degrees)
+        theta_h = math.degrees(math.atan2(gaze_vector[0], gaze_vector[2]))
+        theta_v = math.degrees(math.atan2(gaze_vector[1], gaze_vector[2]))
+        
+        # single eye tracking - no fake left/right data
+        return {
+            'single_gaze_vector': gaze_vector.tolist(),
+            'single_angles': [theta_h, theta_v],
+            'single_offset': [offset_x, offset_y]
+        }
 
     def run(self, camera_index=0):
         """main tracking loop"""
@@ -354,8 +396,8 @@ class ContourGazeTracker:
             
             # draw roi rectangle (always visible)
             h, w = frame.shape[:2]
-            roi_x1, roi_y1 = int(w*0.2), int(h*0.3)
-            roi_x2, roi_y2 = int(w*0.8), int(h*0.8)
+            roi_x1, roi_y1 = int(w*0.25), int(h*0.3)
+            roi_x2, roi_y2 = int(w*0.75), int(h*0.75)
             cv2.rectangle(frame, (roi_x1, roi_y1), (roi_x2, roi_y2), (0, 255, 0), 2)
             
             # display metrics on frame

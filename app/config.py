@@ -15,7 +15,7 @@ load_dotenv(Path(__file__).resolve().parents[1] / ".env")
 
 FLASK_HOST = os.getenv("EYE_FLASK_HOST", "127.0.0.1")
 FLASK_PORT = int(os.getenv("EYE_FLASK_PORT", "5051"))
-BYPASS_SERIAL = os.getenv("BYPASS_SERIAL", "true").lower() == "true"
+BYPASS_SERIAL = os.getenv("BYPASS_SERIAL", "false").lower() == "true"
 SERIAL_DEBUG = os.getenv("EYE_SERIAL_DEBUG", "true").lower() == "true"
 
 SERIAL_HANDSHAKE_ATTEMPTS = int(os.getenv("EYE_SERIAL_HANDSHAKE_ATTEMPTS", "3"))
@@ -28,7 +28,7 @@ STREAM_RETRY_DELAY_S = float(os.getenv("EYE_STREAM_RETRY_DELAY_S", "2.0"))
 
 MJPEG_PATH_CANDIDATES = tuple(
     part.strip()
-    for part in os.getenv("EYE_MJPEG_PATHS", "/stream,/mjpeg,/cam.mjpeg,/video")
+    for part in os.getenv("EYE_MJPEG_PATHS", ":81/stream")
     .split(",")
     if part.strip()
 )

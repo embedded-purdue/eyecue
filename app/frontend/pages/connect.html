@@ -9,6 +9,21 @@
 </head>
 <body>
   <div class="container">
+    <div class="window-chrome">
+      <div class="window-controls" role="group" aria-label="Window controls">
+        <button type="button" id="windowClose" class="window-dot window-dot-close" aria-label="Close window"></button>
+        <button type="button" id="windowMinimize" class="window-dot window-dot-minimize" aria-label="Minimize window"></button>
+        <button type="button" id="windowMaximize" class="window-dot window-dot-maximize" aria-label="Maximize window"></button>
+      </div>
+    </div>
+
+    <div class="glass-optics" aria-hidden="true">
+      <div class="glass-edge"></div>
+      <div class="glass-glare"></div>
+      <div class="glass-caustic"></div>
+      <div class="glass-prism"></div>
+    </div>
+
     <div class="page-title">
       <img src="../assets/eyecue-logo.png" alt="EyeCue logo" class="brand-logo">
     </div>

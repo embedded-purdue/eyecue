@@ -12,8 +12,8 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
   position: relative;
   overflow-x: hidden;
-  background-color: #dbe8f3;
-  background-image: url("../assets/liquid-glass-background.png");
+  background-color: #c9d9e8;
+  background-image: url("../assets/liquid-glass-background.jpg");
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
@@ -31,9 +31,9 @@ body::before {
   content: "";
   position: fixed;
   inset: 0;
-  background: rgba(236, 245, 255, 0.28);
-  backdrop-filter: blur(2px) saturate(112%);
-  -webkit-backdrop-filter: blur(2px) saturate(112%);
+  background: rgba(240, 248, 255, 0.08);
+  backdrop-filter: blur(0.5px) saturate(108%);
+  -webkit-backdrop-filter: blur(0.5px) saturate(108%);
   pointer-events: none;
   z-index: -1;
 }
@@ -43,28 +43,148 @@ body::before {
   width: 100%;
   position: relative;
   text-align: center;
-  background: rgba(246, 251, 255, 0.34);
-  border: 1px solid rgba(255, 255, 255, 0.84);
+  background: rgba(246, 251, 255, 0.22);
+  border: 1px solid rgba(255, 255, 255, 0.9);
   border-radius: 24px;
-  backdrop-filter: blur(24px) saturate(166%);
-  -webkit-backdrop-filter: blur(24px) saturate(166%);
+  backdrop-filter: blur(28px) saturate(178%);
+  -webkit-backdrop-filter: blur(28px) saturate(178%);
   box-shadow:
-    0 24px 48px rgba(18, 54, 96, 0.18),
-    0 8px 18px rgba(45, 104, 170, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.95),
-    inset 0 -1px 0 rgba(160, 198, 236, 0.25);
+    0 24px 52px rgba(14, 44, 80, 0.2),
+    0 10px 20px rgba(33, 90, 151, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.98),
+    inset 0 -1px 0 rgba(157, 194, 230, 0.3);
   padding: 28px 24px 24px;
+  transform:
+    translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)
+    rotateX(var(--tilt-x, 0deg))
+    rotateY(var(--tilt-y, 0deg));
+  transition: transform 140ms ease, box-shadow 140ms ease;
+  cursor: grab;
+  user-select: none;
 }
 
-.container::before {
-  content: "";
+.window-chrome {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  margin-bottom: 10px;
+  -webkit-app-region: drag;
+}
+
+.window-controls {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  -webkit-app-region: no-drag;
+}
+
+.window-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.48);
+}
+
+.window-dot:hover {
+  transform: scale(1.05);
+}
+
+.window-dot-close {
+  background: #ff5f57;
+}
+
+.window-dot-minimize {
+  background: #ffbd2e;
+}
+
+.window-dot-maximize {
+  background: #28c840;
+}
+
+.container.dragging {
+  cursor: grabbing;
+  transition: none;
+  box-shadow:
+    0 30px 66px rgba(14, 44, 80, 0.27),
+    0 12px 26px rgba(33, 90, 151, 0.24),
+    inset 0 1px 0 rgba(255, 255, 255, 0.99),
+    inset 0 -1px 0 rgba(157, 194, 230, 0.34);
+}
+
+.container > * {
+  position: relative;
+  z-index: 2;
+}
+
+.glass-optics {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  top: 10px;
-  height: 1px;
-  background: rgba(255, 255, 255, 0.78);
+  inset: 0;
+  border-radius: 24px;
+  pointer-events: none;
+  overflow: hidden;
+  z-index: 1;
+}
+
+.glass-glare,
+.glass-caustic,
+.glass-prism {
+  position: absolute;
+  pointer-events: none;
+}
+
+.glass-edge {
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.82);
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.36),
+    inset 10px 0 20px rgba(129, 191, 255, 0.22),
+    inset -10px 0 20px rgba(255, 204, 242, 0.18),
+    inset 0 10px 16px rgba(221, 244, 255, 0.2),
+    inset 0 -10px 16px rgba(135, 174, 228, 0.22);
+  filter: blur(var(--edge-blur, 0px));
+  opacity: var(--edge-opacity, 0.78);
+  mix-blend-mode: screen;
+}
+
+.glass-glare {
+  left: var(--glare-x, 50%);
+  top: var(--glare-y, 18%);
+  width: 210px;
+  height: 84px;
+  border-radius: 100px;
+  background: rgba(255, 255, 255, 0.76);
+  filter: blur(18px);
+  opacity: var(--glare-opacity, 0.78);
+  transform: translate(-50%, -50%) rotate(var(--glare-angle, 0deg));
+}
+
+.glass-caustic {
+  left: var(--caustic-x, 76%);
+  top: var(--caustic-y, 70%);
+  width: 170px;
+  height: 170px;
+  border-radius: 54% 46% 61% 39% / 45% 50% 50% 55%;
+  background: rgba(168, 226, 255, 0.4);
+  filter: blur(24px);
+  opacity: var(--caustic-opacity, 0.74);
+  transform: translate(-50%, -50%);
+}
+
+.glass-prism {
+  left: var(--prism-x, 24%);
+  top: var(--prism-y, 80%);
+  width: 180px;
+  height: 58px;
   border-radius: 999px;
+  background: rgba(131, 180, 255, 0.42);
+  filter: blur(20px);
+  opacity: var(--prism-opacity, 0.72);
+  transform: translate(-50%, -50%) rotate(var(--prism-angle, -8deg));
 }
 
 .container::after {
@@ -75,8 +195,8 @@ body::before {
   width: 92px;
   height: 20px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.48);
-  filter: blur(8px);
+  background: rgba(255, 255, 255, 0.7);
+  filter: blur(10px);
   pointer-events: none;
 }
 
@@ -121,13 +241,16 @@ h2 {
   font-size: 16px;
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.31);
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   box-shadow:
-    0 10px 18px rgba(31, 84, 143, 0.12),
-    inset 0 1px 0 rgba(255, 255, 255, 0.78),
-    inset 0 -1px 0 rgba(151, 191, 231, 0.2);
+    0 10px 20px rgba(31, 84, 143, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.86),
+    inset 0 -1px 0 rgba(151, 191, 231, 0.26);
   transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
   color: #1f3b64;
+  user-select: text;
 }
 
 .form-group input:focus,
@@ -147,15 +270,18 @@ h2 {
   padding: 14px 24px;
   font-size: 16px;
   font-weight: 600;
-  border: 1px solid rgba(255, 255, 255, 0.66);
+  border: 1px solid rgba(255, 255, 255, 0.78);
   border-radius: 16px;
   cursor: pointer;
   transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
   margin-bottom: 15px;
+  user-select: none;
 }
 
 .btn-primary {
-  background: rgba(76, 153, 236, 0.74);
+  background: rgba(76, 153, 236, 0.58);
+  backdrop-filter: blur(12px) saturate(158%);
+  -webkit-backdrop-filter: blur(12px) saturate(158%);
   color: #f8fcff;
   box-shadow:
     0 14px 24px rgba(36, 94, 165, 0.28),
@@ -171,7 +297,9 @@ h2 {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.34);
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(14px) saturate(156%);
+  -webkit-backdrop-filter: blur(14px) saturate(156%);
   border-color: rgba(255, 255, 255, 0.56);
   color: #285d9f;
   box-shadow:
@@ -302,7 +430,9 @@ h2 {
   padding: 12px 14px;
   border: 1px solid rgba(255, 255, 255, 0.6);
   border-radius: 12px;
-  background: rgba(255, 255, 255, 0.29);
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(16px) saturate(158%);
+  -webkit-backdrop-filter: blur(16px) saturate(158%);
   box-shadow:
     0 8px 18px rgba(37, 93, 157, 0.13),
     inset 0 1px 0 rgba(255, 255, 255, 0.78);
@@ -322,9 +452,9 @@ h2 {
   text-align: left;
   border: 1px solid rgba(255, 255, 255, 0.62);
   border-radius: 14px;
-  background: rgba(255, 255, 255, 0.28);
-  backdrop-filter: blur(16px) saturate(140%);
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(20px) saturate(164%);
+  -webkit-backdrop-filter: blur(20px) saturate(164%);
   box-shadow:
     0 12px 26px rgba(34, 84, 146, 0.16),
     inset 0 1px 0 rgba(255, 255, 255, 0.76);
@@ -406,6 +536,14 @@ h2 {
   display: none;
 }
 
+.container input,
+.container select,
+.container button,
+.container label {
+  position: relative;
+  z-index: 3;
+}
+
 .runtime-actions {
   margin-top: 14px;
   display: grid;
@@ -425,6 +563,25 @@ h2 {
   .container {
     padding: 18px 14px;
     border-radius: 18px;
+    transform: none;
+    cursor: default;
+  }
+
+  .window-chrome {
+    height: 18px;
+  }
+
+  .window-dot {
+    width: 11px;
+    height: 11px;
+  }
+
+  .glass-optics {
+    border-radius: 18px;
+  }
+
+  .glass-edge {
+    border-radius: 18px;
   }
 
   .page-title {
@@ -437,5 +594,14 @@ h2 {
 
   .runtime-actions {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .container,
+  .glass-glare,
+  .glass-caustic,
+  .glass-prism {
+    transition: none;
   }
 }

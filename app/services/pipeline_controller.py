@@ -68,6 +68,21 @@ class PipelineController:
         self._alert_id = 0
         self._state = PipelineState()
 
+        # cursor smoothing state (applied AFTER gaze angle computation)
+        self._smoothed_cursor_x = 0.0
+        self._smoothed_cursor_y = 0.0
+        self._has_smoothed_cursor = False
+        self._cursor_smooth_alpha = 0.15  # lower = smoother (0.0–1.0)
+
+        # latest frame for producer-consumer pattern
+        self._latest_frame = None  # type: Optional[bytes]
+        self._frame_ready = threading.Event()
+
+        # disable pyautogui's built-in 0.1s pause after every call
+        if pyautogui is not None:
+            pyautogui.PAUSE = 0
+            pyautogui.FAILSAFE = True  # keep failsafe on
+
         self._processor = None
         self._processor_error: Optional[str] = None
         if ContourPupilFrameProcessor is None:
@@ -349,7 +364,20 @@ class PipelineController:
                             self._state.stream_url = stream_url
                             self._state.last_error = None
                             self._append_alert_locked("info", "Camera stream connected.")
-                        self._consume_stream(response)
+
+                        # ── producer-consumer: reader thread + processor thread ──
+                        self._latest_frame = None
+                        self._frame_ready.clear()
+
+                        reader = threading.Thread(
+                            target=self._stream_reader,
+                            args=(response,),
+                            daemon=True,
+                            name="stream-reader",
+                        )
+                        reader.start()
+                        self._frame_processor_loop()
+                        reader.join(timeout=2.0)
                 except Exception as exc:
                     last_error = str(exc)
 
@@ -366,32 +394,60 @@ class PipelineController:
                 self._append_alert_locked("warning", "Camera stream lost. Retrying…")
             self._stop_event.wait(max(0.1, STREAM_RETRY_DELAY_S))
 
-    def _consume_stream(self, response: requests.Response) -> None:
+    def _stream_reader(self, response: requests.Response) -> None:
+        """Producer thread: reads MJPEG chunks, stores only the latest complete frame."""
         buffer = bytearray()
 
-        for chunk in response.iter_content(chunk_size=4096):
-            if self._stop_event.is_set():
-                return
-            if not chunk:
+        try:
+            for chunk in response.iter_content(chunk_size=65536):
+                if self._stop_event.is_set():
+                    return
+                if not chunk:
+                    continue
+
+                buffer.extend(chunk)
+
+                # extract all complete JPEG frames, keep only the latest
+                latest = None
+                while True:
+                    start = buffer.find(b"\xff\xd8")
+                    if start < 0:
+                        if len(buffer) > 2:
+                            del buffer[:-2]
+                        break
+
+                    end = buffer.find(b"\xff\xd9", start + 2)
+                    if end < 0:
+                        if start > 0:
+                            del buffer[:start]
+                        break
+
+                    latest = bytes(buffer[start:end + 2])
+                    del buffer[:end + 2]
+
+                if latest is not None:
+                    # atomically publish the latest frame
+                    self._latest_frame = latest
+                    self._frame_ready.set()
+        except Exception:
+            pass
+        finally:
+            # signal processor to stop waiting
+            self._frame_ready.set()
+
+    def _frame_processor_loop(self) -> None:
+        """Consumer: grabs the latest frame and processes it."""
+        while not self._stop_event.is_set():
+            # wait for a new frame (up to 500ms)
+            if not self._frame_ready.wait(timeout=0.5):
                 continue
+            self._frame_ready.clear()
 
-            buffer.extend(chunk)
-            while True:
-                start = buffer.find(b"\xff\xd8")
-                if start < 0:
-                    if len(buffer) > 2:
-                        del buffer[:-2]
-                    break
-
-                end = buffer.find(b"\xff\xd9", start + 2)
-                if end < 0:
-                    if start > 0:
-                        del buffer[:start]
-                    break
-
-                frame_bytes = bytes(buffer[start:end + 2])
-                del buffer[:end + 2]
-                self._process_frame(frame_bytes)
+            frame = self._latest_frame
+            if frame is None:
+                # reader thread ended
+                return
+            self._process_frame(frame)
 
     def _process_frame(self, frame_bytes: bytes) -> None:
         if not frame_bytes:
@@ -424,7 +480,7 @@ class PipelineController:
         if should_track and isinstance(cursor, dict):
             self._apply_cursor(cursor)
 
-    def _apply_cursor(self, cursor: Dict[str, int | float]) -> None:
+    def _apply_cursor(self, cursor: Dict[str, Any]) -> None:
         if pyautogui is None:
             with self._lock:
                 self._set_error_locked("pyautogui is unavailable for cursor movement.")
@@ -438,12 +494,25 @@ class PipelineController:
             assert x is not None
             assert y is not None
 
-            x = float(x)
-            y = float(y)
+            raw_x = float(x)
+            raw_y = float(y)
+
+            # ── heavy exponential smoothing on final cursor position ──
+            if not self._has_smoothed_cursor:
+                self._smoothed_cursor_x = raw_x
+                self._smoothed_cursor_y = raw_y
+                self._has_smoothed_cursor = True
+            else:
+                alpha = self._cursor_smooth_alpha
+                self._smoothed_cursor_x = alpha * raw_x + (1 - alpha) * self._smoothed_cursor_x
+                self._smoothed_cursor_y = alpha * raw_y + (1 - alpha) * self._smoothed_cursor_y
+
+            x = self._smoothed_cursor_x
+            y = self._smoothed_cursor_y
 
             if SERIAL_DEBUG:
-                print(f"[cursor] moveTo x={x} y={y} confidence={confidence}", flush=True)
-            pyautogui.moveTo(x, y)
+                print(f"[cursor] moveTo x={x:.0f} y={y:.0f} confidence={confidence}", flush=True)
+            pyautogui.moveTo(int(x), int(y))
         except Exception as exc:
             with self._lock:
                 self._set_error_locked(f"Cursor update failed: {exc}")

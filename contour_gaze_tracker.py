@@ -226,9 +226,9 @@ class ContourGazeTracker:
         
         # calc exact roi center (middle of roi) - roi_center parameter is not used
         h, w = frame_shape[:2]
-        roi_width = int(w * 0.6)  # roi width
-        roi_height = int(h * 0.5)  # roi height
-        roi_center_x = int(w * 0.2) + roi_width // 2  # exact center of roi
+        roi_width = int(w * 0.5)  # roi width (matches pupil_detector: 0.25 to 0.75)
+        roi_height = int(h * 0.45)  # roi height (matches pupil_detector: 0.3 to 0.75)
+        roi_center_x = int(w * 0.25) + roi_width // 2  # exact center of roi
         roi_center_y = int(h * 0.3) + roi_height // 2  # exact center of roi
         
         # calc deviation from roi center (in pixels)

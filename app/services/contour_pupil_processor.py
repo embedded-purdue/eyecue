@@ -142,6 +142,9 @@ class ContourPupilFrameProcessor:
 
         frame_height, frame_width = frame.shape[:2]
 
+        # mirror horizontally — camera faces the eye so left/right are reversed
+        frame = cv2.flip(frame, 1)
+
         try:
             full_center, _roi_center, bbox = detect_pupil_contour(frame)
         except Exception as exc:  # pragma: no cover - runtime guard

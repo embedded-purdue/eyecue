@@ -14,6 +14,7 @@ const BACKEND_PORT = 5051;
 const BACKEND_BASE = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
 
 let mainWindow = null;
+let calibrationWindow = null;
 let backendProcess = null;
 let backendOwned = false;
 let quitInProgress = false;
@@ -225,6 +226,38 @@ ipcMain.on("window-control", (event, action) => {
   if (action === "close") {
     senderWindow.close();
   }
+});
+
+ipcMain.on("open-calibration", (event, mode) => {
+  if (calibrationWindow && !calibrationWindow.isDestroyed()) {
+    calibrationWindow.focus();
+    return;
+  }
+
+  const calMode = mode === "quick" ? "quick" : "full";
+
+  calibrationWindow = new BrowserWindow({
+    fullscreen: true,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    backgroundColor: "#000000",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, "preload.js"),
+    },
+    title: "EyeCue Calibration",
+  });
+
+  calibrationWindow.loadFile(
+    path.join(__dirname, "pages", "calibrate.html"),
+    { query: { mode: calMode } }
+  );
+
+  calibrationWindow.on("closed", () => {
+    calibrationWindow = null;
+  });
 });
 
 async function shutdownBackend() {

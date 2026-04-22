@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict, dataclass, field
 import threading
 import time
@@ -20,6 +21,8 @@ from app.config import (
     SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S,
     STREAM_RETRY_DELAY_S,
 )
+from app.prefs_utils import load_prefs, save_prefs
+from app.services.calibration import CalibrationState
 
 try:
     import pyautogui
@@ -74,9 +77,27 @@ class PipelineController:
         self._has_smoothed_cursor = False
         self._cursor_smooth_alpha = 0.15  # lower = smoother (0.0–1.0)
 
+        # sliding window for median pre-filter (uses last N raw positions)
+        self._raw_history_x: deque = deque(maxlen=5)
+        self._raw_history_y: deque = deque(maxlen=5)
+
         # latest frame for producer-consumer pattern
         self._latest_frame = None  # type: Optional[bytes]
         self._frame_ready = threading.Event()
+
+        # rolling gaze angle buffer for stable calibration capture
+        self._gaze_history_h: deque = deque(maxlen=20)
+        self._gaze_history_v: deque = deque(maxlen=20)
+        self._last_gaze_h = None  # type: Optional[float]
+        self._last_gaze_v = None  # type: Optional[float]
+
+        # calibration
+        self._calibration = CalibrationState()
+        try:
+            prefs = load_prefs()
+            self._calibration.load_from_prefs(prefs)
+        except Exception:
+            pass
 
         # disable pyautogui's built-in 0.1s pause after every call
         if pyautogui is not None:
@@ -467,8 +488,18 @@ class PipelineController:
                 self._set_error_locked(f"CV processing failed: {exc}")
             return
 
+        # store latest gaze angles for calibration capture
+        diagnostics = result.get("diagnostics") or {}
+        single_angles = diagnostics.get("single_angles")
+        if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
+            h_val = float(single_angles[0])
+            v_val = float(single_angles[1])
+            self._last_gaze_h = h_val
+            self._last_gaze_v = v_val
+            self._gaze_history_h.append(h_val)
+            self._gaze_history_v.append(v_val)
+
         cursor = result.get("cursor")
-        # print(cursor)
         should_track = False
         with self._lock:
             should_track = self._state.tracking_enabled
@@ -478,37 +509,96 @@ class PipelineController:
                 self._state.last_error = str(result.get("error"))
 
         if should_track and isinstance(cursor, dict):
-            self._apply_cursor(cursor)
+            # skip low-confidence detections — they cause wild jumps
+            conf = cursor.get("confidence", 0)
+            if isinstance(conf, (int, float)) and conf < 0.3:
+                return
+            self._apply_cursor(cursor, diagnostics)
 
-    def _apply_cursor(self, cursor: Dict[str, Any]) -> None:
+    def _apply_cursor(self, cursor: Dict[str, Any], diagnostics: Optional[Dict[str, Any]] = None) -> None:
         if pyautogui is None:
             with self._lock:
                 self._set_error_locked("pyautogui is unavailable for cursor movement.")
             return
 
         try:
-            x = cursor.get("x")
-            y = cursor.get("y")
+            raw_x = None
+            raw_y = None
+
+            # if calibrated, use the affine transform on raw gaze angles
+            if self._calibration.is_calibrated and diagnostics:
+                single_angles = (diagnostics or {}).get("single_angles")
+                if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
+                    calibrated = self._calibration.apply(
+                        float(single_angles[0]), float(single_angles[1])
+                    )
+                    if calibrated is not None:
+                        raw_x, raw_y = float(calibrated[0]), float(calibrated[1])
+
+            # fallback to uncalibrated cursor position
+            if raw_x is None or raw_y is None:
+                x_val = cursor.get("x")
+                y_val = cursor.get("y")
+                assert x_val is not None
+                assert y_val is not None
+                raw_x = float(x_val)
+                raw_y = float(y_val)
+
             confidence = cursor.get("confidence")
 
-            assert x is not None
-            assert y is not None
+            # ── get screen bounds for clamping ──
+            try:
+                sw, sh = pyautogui.size()
+                screen_w, screen_h = int(sw), int(sh)
+            except Exception:
+                screen_w, screen_h = 1440, 900
 
-            raw_x = float(x)
-            raw_y = float(y)
+            # clamp raw position to screen bounds before smoothing
+            raw_x = max(0.0, min(float(screen_w - 1), raw_x))
+            raw_y = max(0.0, min(float(screen_h - 1), raw_y))
 
-            # ── heavy exponential smoothing on final cursor position ──
+            # ── median pre-filter using recent history ──
+            # stores the last 5 raw positions and takes the median,
+            # so single-frame spikes are naturally rejected
+            self._raw_history_x.append(raw_x)
+            self._raw_history_y.append(raw_y)
+            median_x = sorted(self._raw_history_x)[len(self._raw_history_x) // 2]
+            median_y = sorted(self._raw_history_y)[len(self._raw_history_y) // 2]
+
+            # ── initialise smoothed cursor ──
             if not self._has_smoothed_cursor:
-                self._smoothed_cursor_x = raw_x
-                self._smoothed_cursor_y = raw_y
+                self._smoothed_cursor_x = median_x
+                self._smoothed_cursor_y = median_y
                 self._has_smoothed_cursor = True
             else:
-                alpha = self._cursor_smooth_alpha
-                self._smoothed_cursor_x = alpha * raw_x + (1 - alpha) * self._smoothed_cursor_x
-                self._smoothed_cursor_y = alpha * raw_y + (1 - alpha) * self._smoothed_cursor_y
+                # ── outlier rejection ──
+                # if this frame jumps more than 800px from the smoothed
+                # position, it's almost certainly a bad detection — ignore it
+                dx = median_x - self._smoothed_cursor_x
+                dy = median_y - self._smoothed_cursor_y
+                jump = (dx * dx + dy * dy) ** 0.5
 
-            x = self._smoothed_cursor_x
-            y = self._smoothed_cursor_y
+                if jump > 800:
+                    # skip this frame entirely — don't update smoothed pos
+                    return
+
+                # ── velocity-adaptive smoothing ──
+                # small movements (< 15px): dead zone, barely move (alpha=0.02)
+                # medium (15-120px): normal tracking (alpha=0.10)
+                # large (> 120px): intentional saccade, follow faster (alpha=0.20)
+                if jump < 15:
+                    alpha = 0.02  # nearly frozen — eye is fixated
+                elif jump < 120:
+                    alpha = 0.10  # normal smooth tracking
+                else:
+                    alpha = 0.20  # fast intentional movement
+
+                self._smoothed_cursor_x = alpha * median_x + (1 - alpha) * self._smoothed_cursor_x
+                self._smoothed_cursor_y = alpha * median_y + (1 - alpha) * self._smoothed_cursor_y
+
+            # final clamp to screen bounds
+            x = max(0.0, min(float(screen_w - 1), self._smoothed_cursor_x))
+            y = max(0.0, min(float(screen_h - 1), self._smoothed_cursor_y))
 
             if SERIAL_DEBUG:
                 print(f"[cursor] moveTo x={x:.0f} y={y:.0f} confidence={confidence}", flush=True)
@@ -516,3 +606,64 @@ class PipelineController:
         except Exception as exc:
             with self._lock:
                 self._set_error_locked(f"Cursor update failed: {exc}")
+
+    # ── Calibration public methods ──────────────────────────────────────
+
+    def get_calibration_state(self) -> Dict[str, Any]:
+        return self._calibration.to_dict()
+
+    def start_calibration(self) -> Dict[str, Any]:
+        return self._calibration.start()
+
+    def record_calibration_point(self, point_index: int, screen_x: float, screen_y: float) -> Dict[str, Any]:
+        """Record the median gaze angles (from recent history) at a known screen position."""
+        if len(self._gaze_history_h) < 3:
+            raise ValueError(
+                "Not enough gaze data yet — look at the dot for a moment before pressing Space."
+            )
+        # use median of recent readings for noise-robust calibration
+        sorted_h = sorted(self._gaze_history_h)
+        sorted_v = sorted(self._gaze_history_v)
+        angle_h = sorted_h[len(sorted_h) // 2]
+        angle_v = sorted_v[len(sorted_v) // 2]
+        return self._calibration.record_point(point_index, angle_h, angle_v, screen_x, screen_y)
+
+    def finish_calibration(self) -> Dict[str, Any]:
+        result = self._calibration.finish()
+        # reset smoothing so calibrated positions take effect immediately
+        self._has_smoothed_cursor = False
+        # persist to prefs
+        try:
+            prefs = load_prefs()
+            self._calibration.save_to_prefs(prefs)
+            save_prefs(prefs)
+        except Exception:
+            pass
+        return result
+
+    def cancel_calibration(self) -> Dict[str, Any]:
+        return self._calibration.cancel()
+
+    def quick_recalibrate(self, screen_x: float, screen_y: float) -> Dict[str, Any]:
+        """Adjust calibration for drift using the center point."""
+        angle_h = self._last_gaze_h
+        angle_v = self._last_gaze_v
+        if angle_h is None or angle_v is None:
+            raise ValueError("No gaze data available yet.")
+        result = self._calibration.quick_recalibrate(angle_h, angle_v, screen_x, screen_y)
+        self._has_smoothed_cursor = False
+        try:
+            prefs = load_prefs()
+            self._calibration.save_to_prefs(prefs)
+            save_prefs(prefs)
+        except Exception:
+            pass
+        return result
+
+    def get_current_gaze(self) -> Dict[str, Any]:
+        """Return the latest raw gaze angles."""
+        return {
+            "angle_h": self._last_gaze_h,
+            "angle_v": self._last_gaze_v,
+            "available": self._last_gaze_h is not None,
+        }

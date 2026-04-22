@@ -85,7 +85,10 @@ def map_gaze_angles_to_screen(
     height = max(1, int(screen_height))
 
     if screen_distance_pixels is None:
-        screen_distance_pixels = width / (2 * math.tan(math.radians(30)))
+        # FOV governs sensitivity: larger FOV = more amplification.
+        # 55° gives ~2.5× more sensitivity than the old 30° value,
+        # letting small pupil movements cover the full screen.
+        screen_distance_pixels = width / (2 * math.tan(math.radians(55)))
 
     angle_h_rad = math.radians(float(angle_h))
     angle_v_rad = -math.radians(float(angle_v))

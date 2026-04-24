@@ -11,7 +11,7 @@ import math
 import time
 import requests
 from typing import Optional, Tuple, Sequence, Union, Dict
-from pupil_detector import detect_pupil_contour
+from pupil_detector import detect_pupil_contour, PupilTracker, OneEuroFilter2D
 from metrics_collector import MetricsCollector
 
 
@@ -200,9 +200,13 @@ class ContourGazeTracker:
         self.esp32_capture = None
         self.is_local_camera = False
         self.quiet = bool(quiet)
-        # stabilization: smoothed pupil position
+        # stateful pupil tracker (windowed search + jump rejection + ellipse fit)
+        self.pupil_tracker = PupilTracker()
+        # adaptive 1€ smoothing (kills fixation jitter, stays responsive on saccades)
+        self.smoother = OneEuroFilter2D()
         self.smoothed_pupil_center = None
-        self.smoothing_alpha = 0.3  # lower = more smoothing (0.0-1.0)
+        # confidence floor for downstream gaze use
+        self.confidence_floor = 0.30
         # video recording
         self.output_video = output_video
         self.video_writer = None
@@ -336,29 +340,26 @@ class ContourGazeTracker:
             
             # time detection for metrics
             detection_start = time.time()
-            # detect pupil using contour analysis
-            pupil_center, roi_center, bbox = detect_pupil_contour(frame)
+            track = self.pupil_tracker.update(frame)
             detection_time = time.time() - detection_start if self.enable_metrics else None
-            
-            # stabilize pupil position using exponential moving average
-            if pupil_center is not None:
-                if self.smoothed_pupil_center is None:
-                    # initialize with first detection
-                    self.smoothed_pupil_center = pupil_center
-                else:
-                    # exponential smoothing: new = alpha * current + (1-alpha) * previous
-                    self.smoothed_pupil_center = (
-                        int(self.smoothing_alpha * pupil_center[0] + (1 - self.smoothing_alpha) * self.smoothed_pupil_center[0]),
-                        int(self.smoothing_alpha * pupil_center[1] + (1 - self.smoothing_alpha) * self.smoothed_pupil_center[1])
-                    )
-                # use smoothed position for gaze calculation
+
+            pupil_center = track['center']
+            confidence = track['confidence']
+            bbox = track['bbox']
+            roi_center = None  # unused downstream; kept for signature parity
+
+            if pupil_center is not None and confidence >= self.confidence_floor:
+                sx, sy = self.smoother(pupil_center)
+                self.smoothed_pupil_center = (int(round(sx)), int(round(sy)))
+                stable_pupil_center = self.smoothed_pupil_center
+            elif pupil_center is not None and self.smoothed_pupil_center is not None:
+                # low-confidence frame: hold last smoothed position
                 stable_pupil_center = self.smoothed_pupil_center
             else:
-                # if detection fails, reset smoothed position after a few frames to avoid being stuck
-                if self.frame_count % 10 == 0 and self.smoothed_pupil_center is not None:
-                    # reset after 10 frames of failed detection
-                    self.smoothed_pupil_center = None
-                stable_pupil_center = self.smoothed_pupil_center if self.smoothed_pupil_center else None
+                # full miss: reset smoother so we don't snap on re-acquire
+                self.smoother.reset()
+                self.smoothed_pupil_center = None
+                stable_pupil_center = None
             
             # record metrics
             if self.enable_metrics and self.metrics:

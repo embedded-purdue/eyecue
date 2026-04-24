@@ -9,7 +9,7 @@ import cv2
 import numpy as np
 
 from contour_gaze_tracker import ContourGazeTracker, map_gaze_angles_to_screen
-from pupil_detector import detect_pupil_contour
+from pupil_detector import OneEuroFilter2D, PupilTracker
 
 try:
     import pyautogui
@@ -47,7 +47,9 @@ class ContourPupilFrameProcessor:
         self._has_last_cursor = False
         self._frame_count = 0
         self._smoothed_pupil_center: Optional[Tuple[int, int]] = None
-        self._smoothing_alpha = 0.3
+        self._pupil_tracker = PupilTracker()
+        self._smoother = OneEuroFilter2D()
+        self._confidence_floor = 0.30
         self._gaze_tracker = ContourGazeTracker(enable_metrics=False, quiet=True)
 
     @staticmethod
@@ -146,7 +148,11 @@ class ContourPupilFrameProcessor:
         frame = cv2.flip(frame, 1)
 
         try:
-            full_center, _roi_center, bbox = detect_pupil_contour(frame)
+            track = self._pupil_tracker.update(frame)
+            full_center = track['center']
+            bbox = track['bbox']
+            confidence = track['confidence']
+            _roi_center = None
         except Exception as exc:  # pragma: no cover - runtime guard
             return {
                 "ok": False,
@@ -172,27 +178,22 @@ class ContourPupilFrameProcessor:
         )
         self._frame_count += 1
 
-        if has_detection:
+        if has_detection and confidence >= self._confidence_floor:
             raw_center = (int(full_center[0]), int(full_center[1]))
-            if self._smoothed_pupil_center is None:
-                self._smoothed_pupil_center = raw_center
-            else:
-                self._smoothed_pupil_center = (
-                    int(
-                        self._smoothing_alpha * raw_center[0]
-                        + (1 - self._smoothing_alpha) * self._smoothed_pupil_center[0]
-                    ),
-                    int(
-                        self._smoothing_alpha * raw_center[1]
-                        + (1 - self._smoothing_alpha) * self._smoothed_pupil_center[1]
-                    ),
-                )
-        elif self._frame_count % 10 == 0 and self._smoothed_pupil_center is not None:
+            sx, sy = self._smoother(raw_center)
+            self._smoothed_pupil_center = (int(round(sx)), int(round(sy)))
+        elif has_detection and self._smoothed_pupil_center is not None:
+            # low-confidence frame — hold last smoothed position
+            pass
+        elif not has_detection:
+            # full miss — reset smoother so we don't snap on re-acquire
+            self._smoother.reset()
             self._smoothed_pupil_center = None
 
         diagnostics: Dict[str, Any] = {
             "stage": "contour_pupil",
             "detection_ok": bool(has_detection),
+            "confidence": float(confidence),
             "screen_width": screen_width,
             "screen_height": screen_height,
             "frame_width": frame_width,
@@ -278,7 +279,7 @@ class ContourPupilFrameProcessor:
 
             return {
                 "ok": True,
-                "cursor": {"x": cursor_x, "y": cursor_y, "confidence": 0.8},
+                "cursor": {"x": cursor_x, "y": cursor_y, "confidence": float(confidence)},
                 "diagnostics": diagnostics,
                 "error": None,
             }

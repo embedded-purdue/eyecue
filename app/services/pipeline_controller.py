@@ -85,11 +85,17 @@ class PipelineController:
         self._latest_frame = None  # type: Optional[bytes]
         self._frame_ready = threading.Event()
 
-        # rolling gaze angle buffer for stable calibration capture
+        # rolling gaze angle buffer (kept for status display only)
         self._gaze_history_h: deque = deque(maxlen=20)
         self._gaze_history_v: deque = deque(maxlen=20)
         self._last_gaze_h = None  # type: Optional[float]
         self._last_gaze_v = None  # type: Optional[float]
+
+        # rolling NORMALIZED PUPIL POSITION buffer — what calibration actually fits on
+        self._pupil_nx_history: deque = deque(maxlen=40)
+        self._pupil_ny_history: deque = deque(maxlen=20)
+        self._last_pupil_nx = None  # type: Optional[float]
+        self._last_pupil_ny = None  # type: Optional[float]
 
         # calibration
         self._calibration = CalibrationState()
@@ -488,7 +494,8 @@ class PipelineController:
                 self._set_error_locked(f"CV processing failed: {exc}")
             return
 
-        # store latest gaze angles for calibration capture
+        # store latest gaze angles (status display) and normalized pupil
+        # position (calibration input)
         diagnostics = result.get("diagnostics") or {}
         single_angles = diagnostics.get("single_angles")
         if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
@@ -498,6 +505,25 @@ class PipelineController:
             self._last_gaze_v = v_val
             self._gaze_history_h.append(h_val)
             self._gaze_history_v.append(v_val)
+
+        pupil_center = diagnostics.get("pupil_center")
+        frame_w = diagnostics.get("frame_width")
+        frame_h = diagnostics.get("frame_height")
+        if (
+            isinstance(pupil_center, dict)
+            and isinstance(frame_w, (int, float)) and frame_w > 0
+            and isinstance(frame_h, (int, float)) and frame_h > 0
+        ):
+            try:
+                nx = float(pupil_center["x"]) / float(frame_w)
+                ny = float(pupil_center["y"]) / float(frame_h)
+            except (KeyError, TypeError, ValueError):
+                nx = ny = None
+            if nx is not None and ny is not None:
+                self._last_pupil_nx = nx
+                self._last_pupil_ny = ny
+                self._pupil_nx_history.append(nx)
+                self._pupil_ny_history.append(ny)
 
         cursor = result.get("cursor")
         should_track = False
@@ -525,13 +551,12 @@ class PipelineController:
             raw_x = None
             raw_y = None
 
-            # if calibrated, use the affine transform on raw gaze angles
-            if self._calibration.is_calibrated and diagnostics:
-                single_angles = (diagnostics or {}).get("single_angles")
-                if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
-                    calibrated = self._calibration.apply(
-                        float(single_angles[0]), float(single_angles[1])
-                    )
+            # if calibrated, run the polynomial on the normalized pupil position
+            if self._calibration.is_calibrated:
+                nx = self._last_pupil_nx
+                ny = self._last_pupil_ny
+                if nx is not None and ny is not None:
+                    calibrated = self._calibration.apply(nx, ny)
                     if calibrated is not None:
                         raw_x, raw_y = float(calibrated[0]), float(calibrated[1])
 
@@ -616,17 +641,16 @@ class PipelineController:
         return self._calibration.start()
 
     def record_calibration_point(self, point_index: int, screen_x: float, screen_y: float) -> Dict[str, Any]:
-        """Record the median gaze angles (from recent history) at a known screen position."""
-        if len(self._gaze_history_h) < 3:
+        """Record the median normalized pupil position at a known screen target."""
+        if len(self._pupil_nx_history) < 3:
             raise ValueError(
-                "Not enough gaze data yet — look at the dot for a moment before pressing Space."
+                "Not enough pupil data yet — look at the dot for a moment before pressing Space."
             )
-        # use median of recent readings for noise-robust calibration
-        sorted_h = sorted(self._gaze_history_h)
-        sorted_v = sorted(self._gaze_history_v)
-        angle_h = sorted_h[len(sorted_h) // 2]
-        angle_v = sorted_v[len(sorted_v) // 2]
-        return self._calibration.record_point(point_index, angle_h, angle_v, screen_x, screen_y)
+        sorted_nx = sorted(self._pupil_nx_history)
+        sorted_ny = sorted(self._pupil_ny_history)
+        nx = sorted_nx[len(sorted_nx) // 2]
+        ny = sorted_ny[len(sorted_ny) // 2]
+        return self._calibration.record_point(point_index, nx, ny, screen_x, screen_y)
 
     def finish_calibration(self) -> Dict[str, Any]:
         result = self._calibration.finish()
@@ -645,12 +669,12 @@ class PipelineController:
         return self._calibration.cancel()
 
     def quick_recalibrate(self, screen_x: float, screen_y: float) -> Dict[str, Any]:
-        """Adjust calibration for drift using the center point."""
-        angle_h = self._last_gaze_h
-        angle_v = self._last_gaze_v
-        if angle_h is None or angle_v is None:
-            raise ValueError("No gaze data available yet.")
-        result = self._calibration.quick_recalibrate(angle_h, angle_v, screen_x, screen_y)
+        """Shift the constant terms so the current pupil position maps to the target."""
+        nx = self._last_pupil_nx
+        ny = self._last_pupil_ny
+        if nx is None or ny is None:
+            raise ValueError("No pupil data available yet.")
+        result = self._calibration.quick_recalibrate(nx, ny, screen_x, screen_y)
         self._has_smoothed_cursor = False
         try:
             prefs = load_prefs()
@@ -661,9 +685,11 @@ class PipelineController:
         return result
 
     def get_current_gaze(self) -> Dict[str, Any]:
-        """Return the latest raw gaze angles."""
+        """Return the latest gaze status for the calibration UI."""
         return {
             "angle_h": self._last_gaze_h,
             "angle_v": self._last_gaze_v,
-            "available": self._last_gaze_h is not None,
+            "pupil_nx": self._last_pupil_nx,
+            "pupil_ny": self._last_pupil_ny,
+            "available": self._last_pupil_nx is not None,
         }

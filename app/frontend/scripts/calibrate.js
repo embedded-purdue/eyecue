@@ -5,12 +5,17 @@
  * Communicates with the backend via the same api-client.js used elsewhere.
  */
 
+// 3x3 grid — must match CALIBRATION_POINTS in app/services/calibration.py
 const CALIBRATION_POINTS = [
+  { x: 0.08, y: 0.08, label: "Top-Left" },
+  { x: 0.50, y: 0.08, label: "Top-Center" },
+  { x: 0.92, y: 0.08, label: "Top-Right" },
+  { x: 0.08, y: 0.50, label: "Middle-Left" },
   { x: 0.50, y: 0.50, label: "Center" },
-  { x: 0.05, y: 0.05, label: "Top-Left" },
-  { x: 0.95, y: 0.05, label: "Top-Right" },
-  { x: 0.05, y: 0.95, label: "Bottom-Left" },
-  { x: 0.95, y: 0.95, label: "Bottom-Right" },
+  { x: 0.92, y: 0.50, label: "Middle-Right" },
+  { x: 0.08, y: 0.92, label: "Bottom-Left" },
+  { x: 0.50, y: 0.92, label: "Bottom-Center" },
+  { x: 0.92, y: 0.92, label: "Bottom-Right" },
 ];
 
 const dot = document.getElementById("targetDot");
@@ -102,11 +107,11 @@ function showPoint(index) {
   instructionTitle.textContent = `Point ${index + 1} of ${CALIBRATION_POINTS.length} — ${pt.label}`;
   instructionText.innerHTML = 'Hold steady — look at the dot...';
 
-  // wait 1.5s for gaze buffer to fill with stable readings
+  // wait briefly for the pupil buffer to fill with stable readings
   setTimeout(() => {
     readyToCapture = true;
     instructionText.innerHTML = 'Now press <kbd>Space</kbd> to capture';
-  }, 1500);
+  }, 700);
 }
 
 async function recordCurrentPoint() {

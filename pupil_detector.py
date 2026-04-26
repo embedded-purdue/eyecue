@@ -35,9 +35,12 @@ def _remove_reflections_fast(roi_gray):
     Remove specular reflections using fast morphological fill.
     Much cheaper than cv2.inpaint (~0.3ms vs ~20ms).
     """
-    # fast bright-spot detection: anything above fixed high threshold
-    # avoids np.percentile which sorts the entire array
-    _, bright_mask = cv2.threshold(roi_gray, 220, 255, cv2.THRESH_BINARY)
+    # Fast bright-spot detection. Use a local-statistics threshold so dim
+    # scenes still clean reflections, while bright scenes do not over-mask.
+    mean_val = float(np.mean(roi_gray))
+    std_val = float(np.std(roi_gray))
+    bright_thresh = int(max(205, min(245, mean_val + 2.2 * std_val)))
+    _, bright_mask = cv2.threshold(roi_gray, bright_thresh, 255, cv2.THRESH_BINARY)
 
     # if no bright spots, skip entirely
     if cv2.countNonZero(bright_mask) == 0:
@@ -58,8 +61,106 @@ def _enhance_contrast(roi_gray):
     return _CLAHE.apply(roi_gray)
 
 
+def _score_candidates_at_threshold(
+    roi_processed,
+    roi_raw,
+    roi_area,
+    thresh_val,
+    mask_buf,
+    seen_centroids,
+    *,
+    prefer_xy_local=None,
+    min_area=30,
+    max_area_ratio=0.30,
+    aspect_lo=0.55,
+    aspect_hi=1.85,
+):
+    """Find and score contour candidates for one threshold value."""
+    _, thresh = cv2.threshold(roi_processed, thresh_val, 255, cv2.THRESH_BINARY_INV)
+
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, _KERNEL_3, iterations=3)
+    thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, _KERNEL_3, iterations=1)
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    roi_h, roi_w = roi_raw.shape[:2]
+    roi_diag = math.sqrt(float(roi_w * roi_w + roi_h * roi_h))
+    candidates = []
+
+    for contour in contours:
+        area = cv2.contourArea(contour)
+
+        if area < min_area or area > roi_area * max_area_ratio:
+            continue
+
+        x, y, w_box, h_box = cv2.boundingRect(contour)
+        if h_box == 0 or w_box == 0:
+            continue
+        if w_box > roi_w * 0.70 or h_box > roi_h * 0.70:
+            continue
+        aspect_ratio = float(w_box) / h_box
+
+        if aspect_ratio < aspect_lo or aspect_ratio > aspect_hi:
+            continue
+
+        M = cv2.moments(contour)
+        if M["m00"] != 0:
+            cx = int(M["m10"] / M["m00"])
+            cy = int(M["m01"] / M["m00"])
+        else:
+            cx = x + w_box // 2
+            cy = y + h_box // 2
+
+        centroid_key = (cx // 5, cy // 5)
+        if centroid_key in seen_centroids:
+            continue
+        seen_centroids.add(centroid_key)
+
+        mask_buf[:] = 0
+        cv2.drawContours(mask_buf, [contour], -1, 255, -1)
+        mean_intensity = cv2.mean(roi_raw, mask=mask_buf)[0]
+
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            continue
+        circularity = 4 * np.pi * area / (perimeter * perimeter)
+
+        fill_ratio = area / max(1.0, float(w_box * h_box))
+        edge_margin = min(x, y, roi_w - (x + w_box), roi_h - (y + h_box))
+        edge_penalty = max(0.0, (6.0 - float(edge_margin)) / 6.0) * 8.0
+        fill_penalty = abs(fill_ratio - 0.72) * 10.0
+
+        prior_penalty = 0.0
+        if prefer_xy_local is not None and roi_diag > 0:
+            px, py = float(prefer_xy_local[0]), float(prefer_xy_local[1])
+            dist = math.sqrt((float(cx) - px) ** 2 + (float(cy) - py) ** 2)
+            prior_penalty = min(10.0, (dist / roi_diag) * 12.0)
+
+        darkness_score = (255 - mean_intensity) * 0.5
+        circularity_score = circularity * 50 * 0.25
+        area_score = min(area / roi_area * 100, 15) * 0.25
+        score = darkness_score + circularity_score + area_score - edge_penalty - fill_penalty - prior_penalty
+
+        sub_cx, sub_cy = _subpixel_center(contour, (cx, cy))
+
+        candidates.append({
+            'contour': contour,
+            'score': score,
+            'mean_intensity': mean_intensity,
+            'area': area,
+            'circularity': circularity,
+            'aspect_ratio': aspect_ratio,
+            'fill_ratio': fill_ratio,
+            'edge_margin': edge_margin,
+            'thresh_val': thresh_val,
+            'cx_local': sub_cx,
+            'cy_local': sub_cy,
+        })
+
+    return candidates
+
+
 def _find_candidates_fast(roi_processed, roi_raw, roi_area, min_area=30, max_area_ratio=0.30,
-                          aspect_lo=0.55, aspect_hi=1.85):
+                          aspect_lo=0.55, aspect_hi=1.85, prefer_xy_local=None):
     """
     Find and score contour candidates using 2 threshold levels (down from 4).
     Pre-allocates mask buffer to avoid per-contour np.zeros().
@@ -81,77 +182,44 @@ def _find_candidates_fast(roi_processed, roi_raw, roi_area, min_area=30, max_are
     if abs(otsu_thresh - adaptive_thresh) > 15:
         thresholds.append(otsu_thresh)
 
-    seen_centroids = set()
     candidates = []
+    seen_centroids = set()
     mask_buf = _get_mask_buf(roi_raw.shape)
 
     for thresh_val in thresholds:
-        _, thresh = cv2.threshold(roi_processed, thresh_val, 255, cv2.THRESH_BINARY_INV)
+        candidates.extend(_score_candidates_at_threshold(
+            roi_processed,
+            roi_raw,
+            roi_area,
+            thresh_val,
+            mask_buf,
+            seen_centroids,
+            prefer_xy_local=prefer_xy_local,
+            min_area=min_area,
+            max_area_ratio=max_area_ratio,
+            aspect_lo=aspect_lo,
+            aspect_hi=aspect_hi,
+        ))
 
-        # morphological cleanup
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, _KERNEL_3, iterations=3)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, _KERNEL_3, iterations=1)
+    candidates.sort(key=lambda c: c['score'], reverse=True)
 
-        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for contour in contours:
-            area = cv2.contourArea(contour)
-
-            if area < min_area or area > roi_area * max_area_ratio:
-                continue
-
-            x, y, w_box, h_box = cv2.boundingRect(contour)
-            if h_box == 0:
-                continue
-            aspect_ratio = float(w_box) / h_box
-
-            if aspect_ratio < aspect_lo or aspect_ratio > aspect_hi:
-                continue
-
-            # centroid for dedup
-            M = cv2.moments(contour)
-            if M["m00"] != 0:
-                cx = int(M["m10"] / M["m00"])
-                cy = int(M["m01"] / M["m00"])
-            else:
-                cx = x + w_box // 2
-                cy = y + h_box // 2
-
-            centroid_key = (cx // 5, cy // 5)
-            if centroid_key in seen_centroids:
-                continue
-            seen_centroids.add(centroid_key)
-
-            # mean intensity using reusable mask buffer
-            mask_buf[:] = 0
-            cv2.drawContours(mask_buf, [contour], -1, 255, -1)
-            mean_intensity = cv2.mean(roi_raw, mask=mask_buf)[0]
-
-            # circularity
-            perimeter = cv2.arcLength(contour, True)
-            if perimeter == 0:
-                continue
-            circularity = 4 * np.pi * area / (perimeter * perimeter)
-
-            # scoring
-            darkness_score = (255 - mean_intensity) * 0.5
-            circularity_score = circularity * 50 * 0.25
-            area_score = min(area / roi_area * 100, 15) * 0.25
-            score = darkness_score + circularity_score + area_score
-
-            sub_cx, sub_cy = _subpixel_center(contour, (cx, cy))
-
-            candidates.append({
-                'contour': contour,
-                'score': score,
-                'mean_intensity': mean_intensity,
-                'area': area,
-                'circularity': circularity,
-                'aspect_ratio': aspect_ratio,
-                'thresh_val': thresh_val,
-                'cx_local': sub_cx,
-                'cy_local': sub_cy,
-            })
+    if not candidates or candidates[0]['score'] < 45:
+        std_val = float(np.std(roi_processed))
+        low_contrast_thresh = int(max(20, min(230, mean_val - max(8.0, std_val * 0.35))))
+        if all(abs(low_contrast_thresh - t) > 10 for t in thresholds):
+            candidates.extend(_score_candidates_at_threshold(
+                roi_processed,
+                roi_raw,
+                roi_area,
+                low_contrast_thresh,
+                mask_buf,
+                seen_centroids,
+                prefer_xy_local=prefer_xy_local,
+                min_area=min_area,
+                max_area_ratio=max_area_ratio,
+                aspect_lo=aspect_lo,
+                aspect_hi=aspect_hi,
+            ))
 
     candidates.sort(key=lambda c: c['score'], reverse=True)
     return candidates
@@ -331,7 +399,10 @@ def _candidate_confidence(cand, roi_area):
     # pupil typically occupies 1–15% of the search ROI
     area_score = 1.0 - min(1.0, abs(area_frac - 0.05) / 0.10)
     area_score = max(0.0, area_score)
-    return 0.5 * darkness + 0.35 * circ + 0.15 * area_score
+    fill_ratio = max(0.0, min(1.0, cand.get('fill_ratio', 0.72)))
+    fill_score = 1.0 - min(1.0, abs(fill_ratio - 0.72) / 0.45)
+    edge_score = 1.0 if cand.get('edge_margin', 6) >= 3 else 0.75
+    return 0.45 * darkness + 0.30 * circ + 0.15 * area_score + 0.10 * fill_score * edge_score
 
 
 class PupilTracker:
@@ -384,13 +455,13 @@ class PupilTracker:
     def _detect_in_window(self, gray, window, prefer_full_xy=None):
         roi_raw, roi_processed, ox, oy = _preprocess_roi(gray, window=window)
         roi_area = roi_raw.shape[0] * roi_raw.shape[1]
-        cands = _find_candidates_fast(roi_processed, roi_raw, roi_area)
-        if not cands:
-            return None, 0.0, None
-        # convert preferred reference (full-frame) to roi-local if given
         prefer_local = None
         if prefer_full_xy is not None:
             prefer_local = (prefer_full_xy[0] - ox, prefer_full_xy[1] - oy)
+        cands = _find_candidates_fast(roi_processed, roi_raw, roi_area, prefer_xy_local=prefer_local)
+        if not cands:
+            return None, 0.0, None
+        # convert preferred reference (full-frame) to roi-local if given
         center, _roi_center, bbox = _extract_best(cands, ox, oy, prefer_xy_local=prefer_local)
         # confidence: report on the candidate we actually picked (which may
         # not be cands[0] when proximity tie-breaking kicks in).

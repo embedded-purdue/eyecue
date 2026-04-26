@@ -15,6 +15,10 @@ from pupil_detector import detect_pupil_contour, PupilTracker, OneEuroFilter2D
 from metrics_collector import MetricsCollector
 
 
+DEFAULT_PROJECTION_HALF_FOV_DEG = 55.0
+DEFAULT_MAX_PROJECTION_ANGLE_DEG = 45.0
+
+
 def extract_contour_gaze_data(
     pupil_center: Optional[Sequence[Union[int, float]]],
     frame_shape: Sequence[int],
@@ -79,19 +83,25 @@ def map_gaze_angles_to_screen(
     gyro_v: float = 0.0,
     gyro_center_h: float = 0.0,
     gyro_center_v: float = 0.0,
+    projection_half_fov_deg: float = DEFAULT_PROJECTION_HALF_FOV_DEG,
+    max_projection_angle_deg: float = DEFAULT_MAX_PROJECTION_ANGLE_DEG,
 ) -> Tuple[int, int]:
     """Map gaze angles to screen coordinates using CursorController geometry."""
     width = max(1, int(screen_width))
     height = max(1, int(screen_height))
 
     if screen_distance_pixels is None:
-        # FOV governs sensitivity: larger FOV = more amplification.
-        # 55° gives ~2.5× more sensitivity than the old 30° value,
-        # letting small pupil movements cover the full screen.
-        screen_distance_pixels = width / (2 * math.tan(math.radians(55)))
+        half_fov = max(5.0, min(80.0, float(projection_half_fov_deg)))
+        # This is a projection half-FOV, not a camera FOV. Larger values reduce
+        # screen gain, which makes center fixation steadier.
+        screen_distance_pixels = width / (2 * math.tan(math.radians(half_fov)))
 
-    angle_h_rad = math.radians(float(angle_h))
-    angle_v_rad = -math.radians(float(angle_v))
+    max_angle = max(1.0, min(89.0, float(max_projection_angle_deg)))
+    angle_h_clamped = max(-max_angle, min(max_angle, float(angle_h)))
+    angle_v_clamped = max(-max_angle, min(max_angle, float(angle_v)))
+
+    angle_h_rad = math.radians(angle_h_clamped)
+    angle_v_rad = -math.radians(angle_v_clamped)
 
     angle_h_rad -= math.radians(float(eye_center_h))
     angle_v_rad += math.radians(float(eye_center_v))

@@ -25,201 +25,68 @@ let pollingTimer = null;
 let renderedAlertId = 0;
 let lastPollErrorMessage = "";
 let bootstrapLoaded = false;
+let currentScreenMode = "connect";
+let runtimeReadyStreak = 0;
+let pairingTransitionLockUntil = 0;
+let activeResizeEdge = null;
+
+const RESIZE_MIN_WIDTH = 860;
+const RESIZE_MIN_HEIGHT = 920;
 
 function initInteractiveGlass() {
   const container = document.querySelector(".container");
   if (!container) return;
 
-  const state = {
-    pendingDrag: false,
-    dragging: false,
-    pointerId: null,
-    startX: 0,
-    startY: 0,
-    baseX: 0,
-    baseY: 0,
-    x: 0,
-    y: 0,
-    bounds: null,
-  };
-  const dragThresholdPx = 6;
+  // Dragging is handled by CSS app-region on the container.
+  // Keep this hook for future visual effects, but do not add motion here.
+}
 
-  const interactiveSelector = "input, select, button, textarea, option, a, label";
+function bindWindowResizeHandles() {
+  if (!window.electronAPI) return;
 
-  function clamp(value, min, max) {
-    return Math.max(min, Math.min(max, value));
-  }
+  const handles = document.querySelectorAll(".window-edge-resize, .resize-handle");
+  handles.forEach((handle) => {
+    const edge = handle.dataset.edge;
+    if (!edge) return;
 
-  function applyDragVars(x, y) {
-    state.x = x;
-    state.y = y;
-    container.style.setProperty("--drag-x", `${x}px`);
-    container.style.setProperty("--drag-y", `${y}px`);
-  }
+    handle.addEventListener("mousedown", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      activeResizeEdge = edge;
+      const resizeEdge = edge === "top-left" || edge === "top-right" || edge === "bottom-left" || edge === "bottom-right"
+        ? edge
+        : edge;
+      window.electronAPI.beginWindowResize(
+        resizeEdge,
+        event.screenX,
+        event.screenY,
+        RESIZE_MIN_WIDTH,
+        RESIZE_MIN_HEIGHT,
+      );
 
-  function applyOpticsFromPointer(clientX, clientY) {
-    const rect = container.getBoundingClientRect();
-    if (!rect.width || !rect.height) return;
+      const onMove = (moveEvent) => {
+        if (!activeResizeEdge) return;
+        window.electronAPI.moveWindowResize(
+          moveEvent.screenX,
+          moveEvent.screenY,
+          RESIZE_MIN_WIDTH,
+          RESIZE_MIN_HEIGHT,
+        );
+      };
 
-    const relX = clamp((clientX - rect.left) / rect.width, 0, 1);
-    const relY = clamp((clientY - rect.top) / rect.height, 0, 1);
+      const endResize = () => {
+        if (!activeResizeEdge) return;
+        activeResizeEdge = null;
+        window.electronAPI.endWindowResize();
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", endResize);
+      };
 
-    const tiltX = (0.5 - relY) * 10;
-    const tiltY = (relX - 0.5) * 10;
-    container.style.setProperty("--tilt-x", `${tiltX.toFixed(2)}deg`);
-    container.style.setProperty("--tilt-y", `${tiltY.toFixed(2)}deg`);
-
-    container.style.setProperty("--glare-x", `${(relX * 100).toFixed(1)}%`);
-    container.style.setProperty("--glare-y", `${(8 + relY * 35).toFixed(1)}%`);
-    container.style.setProperty("--caustic-x", `${(58 + relX * 34).toFixed(1)}%`);
-    container.style.setProperty("--caustic-y", `${(52 + relY * 36).toFixed(1)}%`);
-    container.style.setProperty("--prism-x", `${(10 + relX * 38).toFixed(1)}%`);
-    container.style.setProperty("--prism-y", `${(72 + relY * 24).toFixed(1)}%`);
-    container.style.setProperty("--glare-angle", `${((relX - 0.5) * 22).toFixed(1)}deg`);
-    container.style.setProperty("--prism-angle", `${((-12 + relY * 20)).toFixed(1)}deg`);
-
-    const dragStrength = clamp((Math.abs(state.x) + Math.abs(state.y)) / 280, 0, 1);
-    container.style.setProperty("--edge-opacity", `${(0.78 + dragStrength * 0.2).toFixed(2)}`);
-    container.style.setProperty("--edge-blur", `${(dragStrength * 0.8).toFixed(2)}px`);
-    container.style.setProperty("--glare-opacity", `${(0.78 + dragStrength * 0.18).toFixed(2)}`);
-    container.style.setProperty("--caustic-opacity", `${(0.74 + dragStrength * 0.2).toFixed(2)}`);
-    container.style.setProperty("--prism-opacity", `${(0.72 + dragStrength * 0.18).toFixed(2)}`);
-  }
-
-  function resetTiltAndOptics() {
-    container.style.setProperty("--tilt-x", "0deg");
-    container.style.setProperty("--tilt-y", "0deg");
-    container.style.setProperty("--edge-opacity", "0.78");
-    container.style.setProperty("--edge-blur", "0px");
-    container.style.setProperty("--glare-opacity", "0.78");
-    container.style.setProperty("--caustic-opacity", "0.74");
-    container.style.setProperty("--prism-opacity", "0.72");
-  }
-
-  function computeBounds(rect, baseX, baseY) {
-    const margin = 8;
-    return {
-      minX: baseX + (margin - rect.left),
-      maxX: baseX + (window.innerWidth - margin - rect.right),
-      minY: baseY + (margin - rect.top),
-      maxY: baseY + (window.innerHeight - margin - rect.bottom),
-    };
-  }
-
-  function clampToViewport(x, y) {
-    const rect = container.getBoundingClientRect();
-    const bounds = computeBounds(rect, x, y);
-    return {
-      x: clamp(x, bounds.minX, bounds.maxX),
-      y: clamp(y, bounds.minY, bounds.maxY),
-    };
-  }
-
-  container.addEventListener("pointerdown", (event) => {
-    if (window.matchMedia("(max-width: 640px)").matches) {
-      return;
-    }
-    if (event.button !== 0) {
-      return;
-    }
-    if (event.target.closest(interactiveSelector)) {
-      return;
-    }
-
-    state.pendingDrag = true;
-    state.dragging = false;
-    state.pointerId = event.pointerId;
-    state.startX = event.clientX;
-    state.startY = event.clientY;
-    state.baseX = state.x;
-    state.baseY = state.y;
-    container.setPointerCapture(event.pointerId);
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", endResize, { once: true });
+      window.addEventListener("blur", endResize, { once: true });
+    });
   });
-
-  container.addEventListener("pointermove", (event) => {
-    if (event.pointerId !== state.pointerId) {
-      return;
-    }
-
-    if (state.pendingDrag && !state.dragging) {
-      const dx = event.clientX - state.startX;
-      const dy = event.clientY - state.startY;
-      const distance = Math.hypot(dx, dy);
-      if (distance < dragThresholdPx) {
-        return;
-      }
-      state.pendingDrag = false;
-      state.dragging = true;
-      state.bounds = computeBounds(container.getBoundingClientRect(), state.baseX, state.baseY);
-      container.classList.add("dragging");
-    }
-
-    if (!state.dragging) {
-      return;
-    }
-
-    applyOpticsFromPointer(event.clientX, event.clientY);
-
-    const bounds = state.bounds || { minX: -9999, maxX: 9999, minY: -9999, maxY: 9999 };
-    const tentativeX = state.baseX + (event.clientX - state.startX);
-    const tentativeY = state.baseY + (event.clientY - state.startY);
-    const nextX = clamp(tentativeX, bounds.minX, bounds.maxX);
-    const nextY = clamp(tentativeY, bounds.minY, bounds.maxY);
-
-    applyDragVars(nextX, nextY);
-  });
-
-  function finishDrag(event) {
-    if (event && state.pointerId !== null && event.pointerId !== state.pointerId) {
-      return;
-    }
-
-    if (!state.dragging) {
-      state.pendingDrag = false;
-      if (state.pointerId !== null) {
-        try {
-          container.releasePointerCapture(state.pointerId);
-        } catch (_err) {
-          // ignore stale capture errors
-        }
-      }
-      state.pointerId = null;
-      return;
-    }
-    state.pendingDrag = false;
-    state.dragging = false;
-    container.classList.remove("dragging");
-    resetTiltAndOptics();
-    if (state.pointerId !== null) {
-      try {
-        container.releasePointerCapture(state.pointerId);
-      } catch (_err) {
-        // ignore stale capture errors
-      }
-    }
-    state.pointerId = null;
-  }
-
-  container.addEventListener("pointerup", finishDrag);
-  container.addEventListener("pointercancel", finishDrag);
-  container.addEventListener("pointerleave", () => {
-    if (!state.dragging) {
-      resetTiltAndOptics();
-    }
-  });
-
-  window.addEventListener("resize", () => {
-    if (window.matchMedia("(max-width: 640px)").matches) {
-      applyDragVars(0, 0);
-      resetTiltAndOptics();
-      return;
-    }
-    const clamped = clampToViewport(state.x, state.y);
-    applyDragVars(clamped.x, clamped.y);
-    resetTiltAndOptics();
-  });
-
-  resetTiltAndOptics();
 }
 
 function renderPorts(ports, selectedPort) {
@@ -280,6 +147,8 @@ function setScreen(mode) {
   if (stateEls.runtimeScreen) {
     stateEls.runtimeScreen.classList.toggle("screen-hidden", !showRuntime);
   }
+
+  currentScreenMode = mode;
 }
 
 function phaseToScreen(phase) {
@@ -331,7 +200,59 @@ function renderRuntime(runtime) {
     appendAlert(alerts[i]);
   }
 
-  setScreen(phaseToScreen(phase));
+  const targetScreen = phaseToScreen(phase);
+  const now = Date.now();
+  const isRuntimePhase = phase === "streaming" || phase === "stream_retrying";
+
+  if (isRuntimePhase) {
+    runtimeReadyStreak += 1;
+    pairingTransitionLockUntil = 0;
+  } else {
+    runtimeReadyStreak = 0;
+  }
+
+  let stableScreen = targetScreen;
+
+  // Keep pairing visible briefly while connect request is in flight to prevent idle/connect flicker.
+  if (
+    currentScreenMode === "pairing" &&
+    targetScreen === "connect" &&
+    now < pairingTransitionLockUntil
+  ) {
+    stableScreen = "pairing";
+  }
+
+  // Require two consecutive runtime polls before switching from pairing to runtime.
+  if (
+    currentScreenMode === "pairing" &&
+    targetScreen === "runtime" &&
+    runtimeReadyStreak < 2
+  ) {
+    stableScreen = "pairing";
+  }
+
+  // Once runtime is visible, do not bounce back to pairing on transient reconnect phases.
+  if (currentScreenMode === "runtime" && targetScreen === "pairing") {
+    stableScreen = "runtime";
+  }
+
+  // Screen persistence rules:
+  // - Pairing stays visible unless runtime is actually ready or user cancels.
+  // - Runtime stays visible unless user explicitly exits.
+  // - Connect may auto-enter pairing/runtime only when app boots into active states.
+  if (currentScreenMode === "pairing") {
+    if (!(targetScreen === "runtime" && runtimeReadyStreak >= 2)) {
+      stableScreen = "pairing";
+    }
+  }
+
+  if (currentScreenMode === "runtime") {
+    stableScreen = "runtime";
+  }
+
+  if (stableScreen !== currentScreenMode) {
+    setScreen(stableScreen);
+  }
 }
 
 async function refreshRuntime() {
@@ -410,6 +331,8 @@ document
 
     try {
       setConnectBusy(true);
+      runtimeReadyStreak = 0;
+      pairingTransitionLockUntil = Date.now() + 5000;
       setScreen("pairing");
       const runtime = await window.eyeApi.connectRuntime({
         ssid,
@@ -420,7 +343,7 @@ document
       renderRuntime(runtime);
     } catch (err) {
       appendClientAlert("error", `Connection failed: ${err.message}`);
-      setScreen("connect");
+      setScreen("pairing");
     } finally {
       setConnectBusy(false);
     }
@@ -433,6 +356,8 @@ document.getElementById("bypassButton").addEventListener("click", async () => {
 
   try {
     setConnectBusy(true);
+    runtimeReadyStreak = 0;
+    pairingTransitionLockUntil = Date.now() + 5000;
     setScreen("pairing");
     const runtime = await window.eyeApi.bypassRuntime({
       ssid,
@@ -447,7 +372,7 @@ document.getElementById("bypassButton").addEventListener("click", async () => {
     );
   } catch (err) {
     appendClientAlert("error", `Bypass failed: ${err.message}`);
-    setScreen("connect");
+    setScreen("pairing");
   } finally {
     setConnectBusy(false);
   }
@@ -525,6 +450,7 @@ async function updateCalibrationStatus() {
 
 async function init() {
   initInteractiveGlass();
+  bindWindowResizeHandles();
 
   try {
     await loadBootstrap();

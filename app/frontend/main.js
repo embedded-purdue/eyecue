@@ -19,6 +19,7 @@ let backendProcess = null;
 let backendOwned = false;
 let quitInProgress = false;
 let shutdownPromise = null;
+const activeResizeSessions = new Map();
 
 function resolveBackendLaunch() {
   if (app.isPackaged) {
@@ -174,14 +175,17 @@ async function ensureBackend() {
 
 function createWindow() {
   const appIconPath = path.join(__dirname, "assets", "eyecue-logo.png");
+  const isMac = process.platform === "darwin";
   mainWindow = new BrowserWindow({
-    width: 860,
+    width: 980,
     height: 860,
-    minWidth: 700,
-    minHeight: 700,
+    minWidth: 860,
+    minHeight: 720,
     resizable: true,
     frame: false,
     titleBarStyle: "hidden",
+    transparent: true,
+    backgroundColor: "#00000000",
     icon: fs.existsSync(appIconPath) ? appIconPath : undefined,
     webPreferences: {
       nodeIntegration: false,

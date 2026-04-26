@@ -15,14 +15,23 @@ def _jpeg_frame(width: int = 200, height: int = 100) -> bytes:
     return encoded.tobytes()
 
 
+def _track_hit(center, bbox=(12, 10), confidence=0.85, source="full"):
+    return {"center": center, "bbox": bbox, "confidence": confidence, "source": source}
+
+
+def _track_miss():
+    return {"center": None, "bbox": None, "confidence": 0.0, "source": "miss"}
+
+
 class ContourPupilFrameProcessorTests(unittest.TestCase):
     def test_detection_success_uses_gaze_mapping(self):
         processor = ContourPupilFrameProcessor(screen_size_provider=lambda: (1000, 500))
         frame_bytes = _jpeg_frame(width=200, height=100)
 
-        with patch(
-            "app.services.contour_pupil_processor.detect_pupil_contour",
-            return_value=((100, 50), (0, 0), (12, 10)),
+        with patch.object(
+            processor._pupil_tracker,
+            "update",
+            return_value=_track_hit((100, 50)),
         ), patch.object(
             processor._gaze_tracker,
             "extract_gaze_numbers",
@@ -38,12 +47,15 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
             result = processor.process_frame(frame_bytes, {})
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["cursor"], {"x": 111, "y": 222, "confidence": 0.8})
+        self.assertEqual(result["cursor"]["x"], 111)
+        self.assertEqual(result["cursor"]["y"], 222)
+        self.assertAlmostEqual(result["cursor"]["confidence"], 0.85, places=4)
 
         diagnostics = result["diagnostics"]
         self.assertEqual(diagnostics["reason"], "detected_gaze_mapped")
         self.assertEqual(diagnostics["mapping_source"], "gaze_angles_cursorcontroller")
         self.assertFalse(diagnostics["used_fallback"])
+        self.assertAlmostEqual(diagnostics["confidence"], 0.85, places=4)
         self.assertEqual(diagnostics["single_angles"], [8.0, -2.0])
         self.assertEqual(diagnostics["single_offset"], [0.05, -0.02])
         self.assertEqual(diagnostics["single_gaze_vector"], [0.1, 0.2, 0.9])
@@ -60,9 +72,10 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
         processor = ContourPupilFrameProcessor(screen_size_provider=lambda: (1000, 500))
         frame_bytes = _jpeg_frame(width=200, height=100)
 
-        with patch(
-            "app.services.contour_pupil_processor.detect_pupil_contour",
-            return_value=((20, 40), (0, 0), (10, 10)),
+        with patch.object(
+            processor._pupil_tracker,
+            "update",
+            return_value=_track_hit((20, 40), bbox=(10, 10)),
         ), patch.object(
             processor._gaze_tracker,
             "extract_gaze_numbers",
@@ -73,7 +86,8 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
             result = processor.process_frame(frame_bytes, {})
 
         self.assertTrue(result["ok"])
-        self.assertEqual(result["cursor"], {"x": 100, "y": 200, "confidence": 0.8})
+        self.assertEqual(result["cursor"]["x"], 100)
+        self.assertEqual(result["cursor"]["y"], 200)
 
         diagnostics = result["diagnostics"]
         self.assertEqual(diagnostics["reason"], "detected_linear_fallback_gaze_error")
@@ -86,30 +100,35 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
         processor = ContourPupilFrameProcessor(screen_size_provider=lambda: (1200, 800))
         frame_bytes = _jpeg_frame(width=200, height=100)
 
-        with patch(
-            "app.services.contour_pupil_processor.detect_pupil_contour",
-            side_effect=[(None, None, None), (None, None, None)],
+        with patch.object(
+            processor._pupil_tracker,
+            "update",
+            side_effect=[_track_miss(), _track_miss()],
         ):
             first = processor.process_frame(frame_bytes, {})
             second = processor.process_frame(frame_bytes, {})
 
         self.assertTrue(first["ok"])
-        self.assertEqual(first["cursor"], {"x": 600, "y": 400, "confidence": 0.1})
+        self.assertEqual(first["cursor"]["x"], 600)
+        self.assertEqual(first["cursor"]["y"], 400)
         self.assertEqual(first["diagnostics"]["reason"], "no_detection_center")
         self.assertTrue(first["diagnostics"]["used_fallback"])
 
         self.assertTrue(second["ok"])
-        self.assertEqual(second["cursor"], {"x": 600, "y": 400, "confidence": 0.1})
+        self.assertEqual(second["cursor"]["x"], 600)
+        self.assertEqual(second["cursor"]["y"], 400)
         self.assertEqual(second["diagnostics"]["reason"], "no_detection_hold_last")
         self.assertTrue(second["diagnostics"]["used_fallback"])
 
-    def test_detection_uses_smoothed_center_for_gaze_extraction(self):
+    def test_detection_smoothing_dampens_jump(self):
+        """1€ filter must initialize on first sample, then dampen the next jump."""
         processor = ContourPupilFrameProcessor(screen_size_provider=lambda: (1000, 500))
         frame_bytes = _jpeg_frame(width=200, height=100)
 
-        with patch(
-            "app.services.contour_pupil_processor.detect_pupil_contour",
-            side_effect=[((10, 10), (0, 0), (8, 8)), ((20, 20), (0, 0), (8, 8))],
+        with patch.object(
+            processor._pupil_tracker,
+            "update",
+            side_effect=[_track_hit((10, 10)), _track_hit((20, 20))],
         ), patch.object(
             processor._gaze_tracker,
             "extract_gaze_numbers",
@@ -128,8 +147,15 @@ class ContourPupilFrameProcessorTests(unittest.TestCase):
         self.assertTrue(first["ok"])
         self.assertTrue(second["ok"])
         self.assertEqual(gaze_mock.call_count, 2)
+
+        # first sample passes through unchanged
         self.assertEqual(gaze_mock.call_args_list[0].args[0], (10, 10))
-        self.assertEqual(gaze_mock.call_args_list[1].args[0], (13, 13))
+        # second sample is between previous-smoothed and raw input — i.e. damped
+        smoothed_x, smoothed_y = gaze_mock.call_args_list[1].args[0]
+        self.assertGreaterEqual(smoothed_x, 10)
+        self.assertLessEqual(smoothed_x, 20)
+        self.assertGreaterEqual(smoothed_y, 10)
+        self.assertLessEqual(smoothed_y, 20)
 
 
 if __name__ == "__main__":

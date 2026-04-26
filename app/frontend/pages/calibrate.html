@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>EyeCue - Calibration</title>
+  <link rel="icon" type="image/png" href="../assets/eyecue-logo.png">
+  <link rel="stylesheet" href="../styles/calibrate.css">
+</head>
+<body>
+  <div id="calibrationOverlay" class="calibration-overlay">
+    <!-- pulsing target dot -->
+    <div id="targetDot" class="target-dot">
+      <div class="dot-inner"></div>
+      <div class="dot-ring"></div>
+      <div class="dot-ring dot-ring-outer"></div>
+    </div>
+
+    <!-- instruction text -->
+    <div id="instructionPanel" class="instruction-panel">
+      <h2 id="instructionTitle">Calibration</h2>
+      <p id="instructionText">Look at the dot and press <kbd>Space</kbd> when ready</p>
+      <div id="progressDots" class="progress-dots"></div>
+    </div>
+
+    <!-- status bar -->
+    <div id="statusBar" class="status-bar">
+      <span id="statusText">Starting calibration...</span>
+      <span id="gazeStatus" class="gaze-indicator">●</span>
+    </div>
+
+    <!-- quick recalibrate mode -->
+    <div id="quickPanel" class="quick-panel hidden">
+      <h2>Quick Recalibrate</h2>
+      <p>Look at the center dot and press <kbd>Space</kbd></p>
+    </div>
+
+    <!-- completion overlay -->
+    <div id="donePanel" class="done-panel hidden">
+      <div class="done-icon">✓</div>
+      <h2>Calibration Complete</h2>
+      <p>Window will close in <span id="countdown">3</span>s...</p>
+    </div>
+  </div>
+
+  <script src="../scripts/api-client.js"></script>
+  <script src="../scripts/calibrate.js"></script>
+</body>
+</html>

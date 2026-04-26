@@ -273,6 +273,9 @@ async function refreshRuntime() {
     if (toggle && toggle.checked !== Boolean(runtime.tracking_enabled)) {
       toggle.checked = Boolean(runtime.tracking_enabled);
     }
+    if (typeof updateCalibrationStatus === "function") {
+      updateCalibrationStatus();
+    }
   } catch (err) {
     const message = `Runtime poll failed: ${err.message}`;
     if (message !== lastPollErrorMessage) {
@@ -410,6 +413,40 @@ document.getElementById("stopButton").addEventListener("click", async () => {
     appendClientAlert("error", `Stop failed: ${err.message}`);
   }
 });
+
+document.getElementById("calibrateButton").addEventListener("click", () => {
+  if (window.electronAPI && window.electronAPI.openCalibration) {
+    window.electronAPI.openCalibration("full");
+  } else {
+    appendClientAlert("error", "Calibration window requires Electron.");
+  }
+});
+
+document.getElementById("quickCalibrateButton").addEventListener("click", () => {
+  if (window.electronAPI && window.electronAPI.openCalibration) {
+    window.electronAPI.openCalibration("quick");
+  } else {
+    appendClientAlert("error", "Calibration window requires Electron.");
+  }
+});
+
+async function updateCalibrationStatus() {
+  try {
+    const data = await window.eyeApi.getCalibrationState();
+    const statusEl = document.getElementById("calibrationStatus");
+    if (statusEl) {
+      if (data && data.calibrated) {
+        statusEl.textContent = "✓ Calibrated";
+        statusEl.classList.add("calibrated");
+      } else {
+        statusEl.textContent = "Not calibrated";
+        statusEl.classList.remove("calibrated");
+      }
+    }
+  } catch {
+    // ignore — backend may not support it yet
+  }
+}
 
 async function init() {
   initInteractiveGlass();

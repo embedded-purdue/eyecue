@@ -14,6 +14,7 @@ const BACKEND_PORT = 5051;
 const BACKEND_BASE = `http://${BACKEND_HOST}:${BACKEND_PORT}`;
 
 let mainWindow = null;
+let calibrationWindow = null;
 let backendProcess = null;
 let backendOwned = false;
 let quitInProgress = false;
@@ -231,79 +232,36 @@ ipcMain.on("window-control", (event, action) => {
   }
 });
 
-ipcMain.on("window-resize-start", (event, payload) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-  if (!senderWindow || senderWindow.isDestroyed()) {
+ipcMain.on("open-calibration", (event, mode) => {
+  if (calibrationWindow && !calibrationWindow.isDestroyed()) {
+    calibrationWindow.focus();
     return;
   }
 
-  const edge = String(payload?.edge || "");
-  if (!edge) {
-    return;
-  }
+  const calMode = mode === "quick" ? "quick" : "full";
 
-  const bounds = senderWindow.getBounds();
-  activeResizeSessions.set(senderWindow.id, {
-    edge,
-    startX: Number(payload?.screenX) || 0,
-    startY: Number(payload?.screenY) || 0,
-    bounds,
+  calibrationWindow = new BrowserWindow({
+    fullscreen: true,
+    frame: false,
+    resizable: false,
+    alwaysOnTop: true,
+    backgroundColor: "#000000",
+    webPreferences: {
+      nodeIntegration: false,
+      contextIsolation: true,
+      preload: path.join(__dirname, "preload.js"),
+    },
+    title: "EyeCue Calibration",
   });
-});
 
-ipcMain.on("window-resize-move", (event, payload) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-  if (!senderWindow || senderWindow.isDestroyed()) {
-    return;
-  }
+  calibrationWindow.loadFile(
+    path.join(__dirname, "pages", "calibrate.html"),
+    { query: { mode: calMode } }
+  );
 
-  const session = activeResizeSessions.get(senderWindow.id);
-  if (!session) {
-    return;
-  }
-
-  const currentX = Number(payload?.screenX) || 0;
-  const currentY = Number(payload?.screenY) || 0;
-  const deltaX = currentX - session.startX;
-  const deltaY = currentY - session.startY;
-
-  const minWidth = Number(payload?.minWidth) || 860;
-  const minHeight = Number(payload?.minHeight) || 920;
-
-  const nextBounds = { ...session.bounds };
-
-  if (session.edge.includes("left")) {
-    const maxShift = session.bounds.width - minWidth;
-    const shift = Math.max(Math.min(deltaX, maxShift), -maxShift);
-    nextBounds.x = session.bounds.x + shift;
-    nextBounds.width = session.bounds.width - shift;
-  }
-
-  if (session.edge.includes("right")) {
-    nextBounds.width = Math.max(minWidth, session.bounds.width + deltaX);
-  }
-
-  if (session.edge.includes("top")) {
-    const maxShift = session.bounds.height - minHeight;
-    const shift = Math.max(Math.min(deltaY, maxShift), -maxShift);
-    nextBounds.y = session.bounds.y + shift;
-    nextBounds.height = session.bounds.height - shift;
-  }
-
-  if (session.edge.includes("bottom")) {
-    nextBounds.height = Math.max(minHeight, session.bounds.height + deltaY);
-  }
-
-  senderWindow.setBounds(nextBounds, false);
-});
-
-ipcMain.on("window-resize-end", (event) => {
-  const senderWindow = BrowserWindow.fromWebContents(event.sender) || mainWindow;
-  if (!senderWindow) {
-    return;
-  }
-
-  activeResizeSessions.delete(senderWindow.id);
+  calibrationWindow.on("closed", () => {
+    calibrationWindow = null;
+  });
 });
 
 async function shutdownBackend() {

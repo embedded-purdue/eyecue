@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import asdict, dataclass, field
 import threading
 import time
@@ -20,6 +21,8 @@ from app.config import (
     SERIAL_HANDSHAKE_ATTEMPT_TIMEOUT_S,
     STREAM_RETRY_DELAY_S,
 )
+from app.prefs_utils import load_prefs, save_prefs
+from app.services.calibration import CalibrationState
 
 try:
     import pyautogui
@@ -67,6 +70,45 @@ class PipelineController:
         self._worker: Optional[threading.Thread] = None
         self._alert_id = 0
         self._state = PipelineState()
+
+        # cursor smoothing state (applied AFTER gaze angle computation)
+        self._smoothed_cursor_x = 0.0
+        self._smoothed_cursor_y = 0.0
+        self._has_smoothed_cursor = False
+        self._cursor_smooth_alpha = 0.15  # lower = smoother (0.0–1.0)
+
+        # sliding window for median pre-filter (uses last N raw positions)
+        self._raw_history_x: deque = deque(maxlen=5)
+        self._raw_history_y: deque = deque(maxlen=5)
+
+        # latest frame for producer-consumer pattern
+        self._latest_frame = None  # type: Optional[bytes]
+        self._frame_ready = threading.Event()
+
+        # rolling gaze angle buffer (kept for status display only)
+        self._gaze_history_h: deque = deque(maxlen=20)
+        self._gaze_history_v: deque = deque(maxlen=20)
+        self._last_gaze_h = None  # type: Optional[float]
+        self._last_gaze_v = None  # type: Optional[float]
+
+        # rolling NORMALIZED PUPIL POSITION buffer — what calibration actually fits on
+        self._pupil_nx_history: deque = deque(maxlen=40)
+        self._pupil_ny_history: deque = deque(maxlen=20)
+        self._last_pupil_nx = None  # type: Optional[float]
+        self._last_pupil_ny = None  # type: Optional[float]
+
+        # calibration
+        self._calibration = CalibrationState()
+        try:
+            prefs = load_prefs()
+            self._calibration.load_from_prefs(prefs)
+        except Exception:
+            pass
+
+        # disable pyautogui's built-in 0.1s pause after every call
+        if pyautogui is not None:
+            pyautogui.PAUSE = 0
+            pyautogui.FAILSAFE = True  # keep failsafe on
 
         self._processor = None
         self._processor_error: Optional[str] = None
@@ -349,7 +391,20 @@ class PipelineController:
                             self._state.stream_url = stream_url
                             self._state.last_error = None
                             self._append_alert_locked("info", "Camera stream connected.")
-                        self._consume_stream(response)
+
+                        # ── producer-consumer: reader thread + processor thread ──
+                        self._latest_frame = None
+                        self._frame_ready.clear()
+
+                        reader = threading.Thread(
+                            target=self._stream_reader,
+                            args=(response,),
+                            daemon=True,
+                            name="stream-reader",
+                        )
+                        reader.start()
+                        self._frame_processor_loop()
+                        reader.join(timeout=2.0)
                 except Exception as exc:
                     last_error = str(exc)
 
@@ -366,32 +421,60 @@ class PipelineController:
                 self._append_alert_locked("warning", "Camera stream lost. Retrying…")
             self._stop_event.wait(max(0.1, STREAM_RETRY_DELAY_S))
 
-    def _consume_stream(self, response: requests.Response) -> None:
+    def _stream_reader(self, response: requests.Response) -> None:
+        """Producer thread: reads MJPEG chunks, stores only the latest complete frame."""
         buffer = bytearray()
 
-        for chunk in response.iter_content(chunk_size=4096):
-            if self._stop_event.is_set():
-                return
-            if not chunk:
+        try:
+            for chunk in response.iter_content(chunk_size=65536):
+                if self._stop_event.is_set():
+                    return
+                if not chunk:
+                    continue
+
+                buffer.extend(chunk)
+
+                # extract all complete JPEG frames, keep only the latest
+                latest = None
+                while True:
+                    start = buffer.find(b"\xff\xd8")
+                    if start < 0:
+                        if len(buffer) > 2:
+                            del buffer[:-2]
+                        break
+
+                    end = buffer.find(b"\xff\xd9", start + 2)
+                    if end < 0:
+                        if start > 0:
+                            del buffer[:start]
+                        break
+
+                    latest = bytes(buffer[start:end + 2])
+                    del buffer[:end + 2]
+
+                if latest is not None:
+                    # atomically publish the latest frame
+                    self._latest_frame = latest
+                    self._frame_ready.set()
+        except Exception:
+            pass
+        finally:
+            # signal processor to stop waiting
+            self._frame_ready.set()
+
+    def _frame_processor_loop(self) -> None:
+        """Consumer: grabs the latest frame and processes it."""
+        while not self._stop_event.is_set():
+            # wait for a new frame (up to 500ms)
+            if not self._frame_ready.wait(timeout=0.5):
                 continue
+            self._frame_ready.clear()
 
-            buffer.extend(chunk)
-            while True:
-                start = buffer.find(b"\xff\xd8")
-                if start < 0:
-                    if len(buffer) > 2:
-                        del buffer[:-2]
-                    break
-
-                end = buffer.find(b"\xff\xd9", start + 2)
-                if end < 0:
-                    if start > 0:
-                        del buffer[:start]
-                    break
-
-                frame_bytes = bytes(buffer[start:end + 2])
-                del buffer[:end + 2]
-                self._process_frame(frame_bytes)
+            frame = self._latest_frame
+            if frame is None:
+                # reader thread ended
+                return
+            self._process_frame(frame)
 
     def _process_frame(self, frame_bytes: bytes) -> None:
         if not frame_bytes:
@@ -411,8 +494,38 @@ class PipelineController:
                 self._set_error_locked(f"CV processing failed: {exc}")
             return
 
+        # store latest gaze angles (status display) and normalized pupil
+        # position (calibration input)
+        diagnostics = result.get("diagnostics") or {}
+        single_angles = diagnostics.get("single_angles")
+        if isinstance(single_angles, (list, tuple)) and len(single_angles) >= 2:
+            h_val = float(single_angles[0])
+            v_val = float(single_angles[1])
+            self._last_gaze_h = h_val
+            self._last_gaze_v = v_val
+            self._gaze_history_h.append(h_val)
+            self._gaze_history_v.append(v_val)
+
+        pupil_center = diagnostics.get("pupil_center")
+        frame_w = diagnostics.get("frame_width")
+        frame_h = diagnostics.get("frame_height")
+        if (
+            isinstance(pupil_center, dict)
+            and isinstance(frame_w, (int, float)) and frame_w > 0
+            and isinstance(frame_h, (int, float)) and frame_h > 0
+        ):
+            try:
+                nx = float(pupil_center["x"]) / float(frame_w)
+                ny = float(pupil_center["y"]) / float(frame_h)
+            except (KeyError, TypeError, ValueError):
+                nx = ny = None
+            if nx is not None and ny is not None:
+                self._last_pupil_nx = nx
+                self._last_pupil_ny = ny
+                self._pupil_nx_history.append(nx)
+                self._pupil_ny_history.append(ny)
+
         cursor = result.get("cursor")
-        # print(cursor)
         should_track = False
         with self._lock:
             should_track = self._state.tracking_enabled
@@ -422,28 +535,161 @@ class PipelineController:
                 self._state.last_error = str(result.get("error"))
 
         if should_track and isinstance(cursor, dict):
-            self._apply_cursor(cursor)
+            # skip low-confidence detections — they cause wild jumps
+            conf = cursor.get("confidence", 0)
+            if isinstance(conf, (int, float)) and conf < 0.3:
+                return
+            self._apply_cursor(cursor, diagnostics)
 
-    def _apply_cursor(self, cursor: Dict[str, int | float]) -> None:
+    def _apply_cursor(self, cursor: Dict[str, Any], diagnostics: Optional[Dict[str, Any]] = None) -> None:
         if pyautogui is None:
             with self._lock:
                 self._set_error_locked("pyautogui is unavailable for cursor movement.")
             return
 
         try:
-            x = cursor.get("x")
-            y = cursor.get("y")
+            raw_x = None
+            raw_y = None
+
+            # if calibrated, run the polynomial on the normalized pupil position
+            if self._calibration.is_calibrated:
+                nx = self._last_pupil_nx
+                ny = self._last_pupil_ny
+                if nx is not None and ny is not None:
+                    calibrated = self._calibration.apply(nx, ny)
+                    if calibrated is not None:
+                        raw_x, raw_y = float(calibrated[0]), float(calibrated[1])
+
+            # fallback to uncalibrated cursor position
+            if raw_x is None or raw_y is None:
+                x_val = cursor.get("x")
+                y_val = cursor.get("y")
+                assert x_val is not None
+                assert y_val is not None
+                raw_x = float(x_val)
+                raw_y = float(y_val)
+
             confidence = cursor.get("confidence")
 
-            assert x is not None
-            assert y is not None
+            # ── get screen bounds for clamping ──
+            try:
+                sw, sh = pyautogui.size()
+                screen_w, screen_h = int(sw), int(sh)
+            except Exception:
+                screen_w, screen_h = 1440, 900
 
-            x = float(x)
-            y = float(y)
+            # clamp raw position to screen bounds before smoothing
+            raw_x = max(0.0, min(float(screen_w - 1), raw_x))
+            raw_y = max(0.0, min(float(screen_h - 1), raw_y))
+
+            # ── median pre-filter using recent history ──
+            # stores the last 5 raw positions and takes the median,
+            # so single-frame spikes are naturally rejected
+            self._raw_history_x.append(raw_x)
+            self._raw_history_y.append(raw_y)
+            median_x = sorted(self._raw_history_x)[len(self._raw_history_x) // 2]
+            median_y = sorted(self._raw_history_y)[len(self._raw_history_y) // 2]
+
+            # ── initialise smoothed cursor ──
+            if not self._has_smoothed_cursor:
+                self._smoothed_cursor_x = median_x
+                self._smoothed_cursor_y = median_y
+                self._has_smoothed_cursor = True
+            else:
+                # ── outlier rejection ──
+                # if this frame jumps more than 800px from the smoothed
+                # position, it's almost certainly a bad detection — ignore it
+                dx = median_x - self._smoothed_cursor_x
+                dy = median_y - self._smoothed_cursor_y
+                jump = (dx * dx + dy * dy) ** 0.5
+
+                if jump > 800:
+                    # skip this frame entirely — don't update smoothed pos
+                    return
+
+                # ── velocity-adaptive smoothing ──
+                # small movements (< 15px): dead zone, barely move (alpha=0.02)
+                # medium (15-120px): normal tracking (alpha=0.10)
+                # large (> 120px): intentional saccade, follow faster (alpha=0.20)
+                if jump < 15:
+                    alpha = 0.02  # nearly frozen — eye is fixated
+                elif jump < 120:
+                    alpha = 0.10  # normal smooth tracking
+                else:
+                    alpha = 0.20  # fast intentional movement
+
+                self._smoothed_cursor_x = alpha * median_x + (1 - alpha) * self._smoothed_cursor_x
+                self._smoothed_cursor_y = alpha * median_y + (1 - alpha) * self._smoothed_cursor_y
+
+            # final clamp to screen bounds
+            x = max(0.0, min(float(screen_w - 1), self._smoothed_cursor_x))
+            y = max(0.0, min(float(screen_h - 1), self._smoothed_cursor_y))
 
             if SERIAL_DEBUG:
-                print(f"[cursor] moveTo x={x} y={y} confidence={confidence}", flush=True)
-            pyautogui.moveTo(x, y)
+                print(f"[cursor] moveTo x={x:.0f} y={y:.0f} confidence={confidence}", flush=True)
+            pyautogui.moveTo(int(x), int(y))
         except Exception as exc:
             with self._lock:
                 self._set_error_locked(f"Cursor update failed: {exc}")
+
+    # ── Calibration public methods ──────────────────────────────────────
+
+    def get_calibration_state(self) -> Dict[str, Any]:
+        return self._calibration.to_dict()
+
+    def start_calibration(self) -> Dict[str, Any]:
+        return self._calibration.start()
+
+    def record_calibration_point(self, point_index: int, screen_x: float, screen_y: float) -> Dict[str, Any]:
+        """Record the median normalized pupil position at a known screen target."""
+        if len(self._pupil_nx_history) < 3:
+            raise ValueError(
+                "Not enough pupil data yet — look at the dot for a moment before pressing Space."
+            )
+        sorted_nx = sorted(self._pupil_nx_history)
+        sorted_ny = sorted(self._pupil_ny_history)
+        nx = sorted_nx[len(sorted_nx) // 2]
+        ny = sorted_ny[len(sorted_ny) // 2]
+        return self._calibration.record_point(point_index, nx, ny, screen_x, screen_y)
+
+    def finish_calibration(self) -> Dict[str, Any]:
+        result = self._calibration.finish()
+        # reset smoothing so calibrated positions take effect immediately
+        self._has_smoothed_cursor = False
+        # persist to prefs
+        try:
+            prefs = load_prefs()
+            self._calibration.save_to_prefs(prefs)
+            save_prefs(prefs)
+        except Exception:
+            pass
+        return result
+
+    def cancel_calibration(self) -> Dict[str, Any]:
+        return self._calibration.cancel()
+
+    def quick_recalibrate(self, screen_x: float, screen_y: float) -> Dict[str, Any]:
+        """Shift the constant terms so the current pupil position maps to the target."""
+        nx = self._last_pupil_nx
+        ny = self._last_pupil_ny
+        if nx is None or ny is None:
+            raise ValueError("No pupil data available yet.")
+        result = self._calibration.quick_recalibrate(nx, ny, screen_x, screen_y)
+        self._has_smoothed_cursor = False
+        try:
+            prefs = load_prefs()
+            self._calibration.save_to_prefs(prefs)
+            save_prefs(prefs)
+        except Exception:
+            pass
+        return result
+
+    def get_current_gaze(self) -> Dict[str, Any]:
+        """Return the latest gaze status for the calibration UI."""
+        return {
+            "angle_h": self._last_gaze_h,
+            "angle_v": self._last_gaze_v,
+            "pupil_nx": self._last_pupil_nx,
+            "pupil_ny": self._last_pupil_ny,
+            "available": self._last_pupil_nx is not None,
+        }

@@ -3,84 +3,100 @@
 standalone pupil detection module using contour analysis
 - extracted from contour_gaze_tracker.py for reuse across modules
 - handles corneal reflections, low-contrast eyes, and varying lighting
+- optimized for real-time processing (~2-5ms per frame)
 """
 
 import cv2
+import math
+import time
 import numpy as np
 
+# ── module-level singletons (avoid per-frame allocation) ────────────────
+_CLAHE = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(4, 4))
+_KERNEL_3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+_KERNEL_5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
 
-def _remove_reflections(roi_gray):
+# reusable mask buffer — lazily sized on first use
+_mask_buf = None  # type: np.ndarray | None
+
+
+def _get_mask_buf(shape):
+    """return a pre-allocated zero mask matching *shape*, reusing memory."""
+    global _mask_buf
+    if _mask_buf is None or _mask_buf.shape != shape:
+        _mask_buf = np.zeros(shape, dtype=np.uint8)
+    else:
+        _mask_buf[:] = 0
+    return _mask_buf
+
+
+def _remove_reflections_fast(roi_gray):
     """
-    remove specular reflections (corneal glints) from the eye roi.
-    reflections are small, very bright spots that break up the dark pupil region.
-    we detect them and inpaint over them with surrounding intensity.
+    Remove specular reflections using fast morphological fill.
+    Much cheaper than cv2.inpaint (~0.3ms vs ~20ms).
     """
-    # find very bright spots (top ~5% intensity or anything near white)
-    bright_thresh = max(200, np.percentile(roi_gray, 95))
-    _, bright_mask = cv2.threshold(roi_gray, bright_thresh, 255, cv2.THRESH_BINARY)
+    # fast bright-spot detection: anything above fixed high threshold
+    # avoids np.percentile which sorts the entire array
+    _, bright_mask = cv2.threshold(roi_gray, 220, 255, cv2.THRESH_BINARY)
 
-    # dilate the bright spots slightly so inpainting covers them fully
-    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    bright_mask = cv2.dilate(bright_mask, kernel, iterations=1)
+    # if no bright spots, skip entirely
+    if cv2.countNonZero(bright_mask) == 0:
+        return roi_gray
 
-    # inpaint over reflections
-    cleaned = cv2.inpaint(roi_gray, bright_mask, inpaintRadius=5, flags=cv2.INPAINT_TELEA)
+    # dilate bright spots slightly
+    bright_mask = cv2.dilate(bright_mask, _KERNEL_5, iterations=1)
+
+    # fill bright spots with local median (fast alternative to inpaint)
+    median = cv2.medianBlur(roi_gray, 7)
+    cleaned = roi_gray.copy()
+    cleaned[bright_mask > 0] = median[bright_mask > 0]
     return cleaned
 
 
 def _enhance_contrast(roi_gray):
-    """
-    apply CLAHE (contrast-limited adaptive histogram equalization) to boost
-    pupil-iris contrast, which is often very low in camera feeds.
-    """
-    clahe = cv2.createCLAHE(clipLimit=2.5, tileGridSize=(4, 4))
-    return clahe.apply(roi_gray)
+    """Apply cached CLAHE to boost pupil-iris contrast."""
+    return _CLAHE.apply(roi_gray)
 
 
-def _find_candidates(roi_processed, roi_raw, roi_area, min_area=8, max_area_ratio=0.40,
-                     aspect_lo=0.3, aspect_hi=3.0):
+def _find_candidates_fast(roi_processed, roi_raw, roi_area, min_area=30, max_area_ratio=0.30,
+                          aspect_lo=0.55, aspect_hi=1.85):
     """
-    threshold, clean, find contours, and score them.
-    tries multiple threshold levels and merges the candidate lists.
+    Find and score contour candidates using 2 threshold levels (down from 4).
+    Pre-allocates mask buffer to avoid per-contour np.zeros().
     """
     mean_val = np.mean(roi_processed)
     min_val = np.min(roi_processed)
 
-    # build a set of thresholds to try — more chances to capture the pupil
-    thresholds = []
+    # build just 2 thresholds: one adaptive + one Otsu
     if min_val > 80:
-        # overexposed: try several cuts relative to the mean
-        thresholds = [mean_val * f for f in (0.75, 0.65, 0.55)]
+        adaptive_thresh = int(mean_val * 0.65)
     else:
-        # normal: range from conservative to aggressive
-        base = max(25, mean_val * 0.4)
-        thresholds = [base, base * 1.3, base * 0.7]
+        adaptive_thresh = int(max(25, mean_val * 0.4))
 
-    # also always try an Otsu threshold as a safety net
     otsu_val, _ = cv2.threshold(roi_processed, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    thresholds.append(otsu_val)
+    otsu_thresh = int(otsu_val)
 
-    # deduplicate and sort
-    thresholds = sorted(set(int(t) for t in thresholds if 5 < t < 250))
+    # deduplicate — if they're very close, just use one
+    thresholds = [adaptive_thresh]
+    if abs(otsu_thresh - adaptive_thresh) > 15:
+        thresholds.append(otsu_thresh)
 
-    seen_centroids = set()  # avoid near-duplicate contours across thresholds
+    seen_centroids = set()
     candidates = []
+    mask_buf = _get_mask_buf(roi_raw.shape)
 
     for thresh_val in thresholds:
         _, thresh = cv2.threshold(roi_processed, thresh_val, 255, cv2.THRESH_BINARY_INV)
 
-        # morphological cleanup — close first to merge reflection-split fragments,
-        # then open to remove noise
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel, iterations=3)
-        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=1)
+        # morphological cleanup
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, _KERNEL_3, iterations=3)
+        thresh = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, _KERNEL_3, iterations=1)
 
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         for contour in contours:
             area = cv2.contourArea(contour)
 
-            # relaxed size filter
             if area < min_area or area > roi_area * max_area_ratio:
                 continue
 
@@ -89,11 +105,10 @@ def _find_candidates(roi_processed, roi_raw, roi_area, min_area=8, max_area_rati
                 continue
             aspect_ratio = float(w_box) / h_box
 
-            # relaxed aspect ratio — pupils can look elliptical from an angle
             if aspect_ratio < aspect_lo or aspect_ratio > aspect_hi:
                 continue
 
-            # compute centroid for dedup
+            # centroid for dedup
             M = cv2.moments(contour)
             if M["m00"] != 0:
                 cx = int(M["m10"] / M["m00"])
@@ -102,16 +117,15 @@ def _find_candidates(roi_processed, roi_raw, roi_area, min_area=8, max_area_rati
                 cx = x + w_box // 2
                 cy = y + h_box // 2
 
-            # skip near-duplicate centroids (within 5px) from different thresholds
             centroid_key = (cx // 5, cy // 5)
             if centroid_key in seen_centroids:
                 continue
             seen_centroids.add(centroid_key)
 
-            # mean intensity of this blob in the original (non-enhanced) roi
-            mask = np.zeros(roi_raw.shape, dtype=np.uint8)
-            cv2.drawContours(mask, [contour], -1, 255, -1)
-            mean_intensity = cv2.mean(roi_raw, mask=mask)[0]
+            # mean intensity using reusable mask buffer
+            mask_buf[:] = 0
+            cv2.drawContours(mask_buf, [contour], -1, 255, -1)
+            mean_intensity = cv2.mean(roi_raw, mask=mask_buf)[0]
 
             # circularity
             perimeter = cv2.arcLength(contour, True)
@@ -119,13 +133,13 @@ def _find_candidates(roi_processed, roi_raw, roi_area, min_area=8, max_area_rati
                 continue
             circularity = 4 * np.pi * area / (perimeter * perimeter)
 
-            # scoring: darkness is most important, circularity is a bonus,
-            # and area gets a small bonus (prefer larger blobs — the real pupil
-            # is usually the largest dark blob)
+            # scoring
             darkness_score = (255 - mean_intensity) * 0.5
             circularity_score = circularity * 50 * 0.25
-            area_score = min(area / roi_area * 100, 15) * 0.25  # caps at 15 points
+            area_score = min(area / roi_area * 100, 15) * 0.25
             score = darkness_score + circularity_score + area_score
+
+            sub_cx, sub_cy = _subpixel_center(contour, (cx, cy))
 
             candidates.append({
                 'contour': contour,
@@ -135,90 +149,138 @@ def _find_candidates(roi_processed, roi_raw, roi_area, min_area=8, max_area_rati
                 'circularity': circularity,
                 'aspect_ratio': aspect_ratio,
                 'thresh_val': thresh_val,
+                'cx_local': sub_cx,
+                'cy_local': sub_cy,
             })
 
     candidates.sort(key=lambda c: c['score'], reverse=True)
     return candidates
 
 
-def detect_pupil_contour(frame):
-    """pupil detection using darkest region with size filtering"""
+def _subpixel_center(contour, fallback_xy):
+    """Sub-pixel pupil center via ellipse fit; falls back to moments/bbox."""
+    if len(contour) >= 5:
+        try:
+            (cx, cy), _axes, _angle = cv2.fitEllipse(contour)
+            return float(cx), float(cy)
+        except cv2.error:
+            pass
+    return float(fallback_xy[0]), float(fallback_xy[1])
 
-    # DEBUG: Check frame validity
-    if frame is None:
-        print("[DEBUG] Frame is None!")
-        return None, None, None
 
-    print(f"[DEBUG] Frame shape: {frame.shape}, dtype: {frame.dtype}, min: {frame.min()}, max: {frame.max()}")
+def _pick_candidate(candidates, prefer_xy_local=None, score_tie_ratio=0.85):
+    """
+    Pick the best candidate from a *score-sorted* list.
 
-    # convert to grayscale
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    print(f"[DEBUG] Gray shape: {gray.shape}, min: {gray.min()}, max: {gray.max()}")
-    
-    # crop roi — wider region to avoid clipping the pupil near edges
-    h, w = gray.shape
-    roi = gray[int(h*0.3):int(h*0.75), int(w*0.25):int(w*0.75)]
-    print(f"[DEBUG] ROI shape: {roi.shape}")
-
-    # remove specular reflections before processing
-    cleaned = _remove_reflections(roi)
-
-    # enhance contrast so the pupil stands out
-    enhanced = _enhance_contrast(cleaned)
-
-    # apply blur to reduce noise (on the enhanced image)
-    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-
-    roi_h, roi_w = roi.shape
-    roi_area = roi_h * roi_w
-
-    # find candidates using multi-threshold approach
-    candidates = _find_candidates(blurred, roi, roi_area)
-
-    print(f"[DEBUG] Found {len(candidates)} valid candidates")
-
+    Without `prefer_xy_local`, return the top-scored candidate.
+    With it, consider all candidates whose score is within `score_tie_ratio`
+    of the top score, and among those pick the one closest to the reference
+    point (in roi-local coords). This kills frame-to-frame candidate
+    swapping when several blobs (pupil, lash shadow, eyebrow) score
+    similarly.
+    """
     if not candidates:
-        print("[DEBUG] No valid candidates - returning None")
+        return None
+    if prefer_xy_local is None:
+        return candidates[0]
+    top_score = candidates[0]['score']
+    cutoff = top_score * score_tie_ratio
+    pool = [c for c in candidates if c['score'] >= cutoff]
+    if len(pool) == 1:
+        return pool[0]
+    rx, ry = float(prefer_xy_local[0]), float(prefer_xy_local[1])
+
+    def _dist2(c):
+        dx = c['cx_local'] - rx
+        dy = c['cy_local'] - ry
+        return dx * dx + dy * dy
+
+    return min(pool, key=_dist2)
+
+
+def _extract_best(candidates, roi_offset_x, roi_offset_y, prefer_xy_local=None):
+    """Extract pupil center from best candidate. Shared by both public functions."""
+    if not candidates:
         return None, None, None
 
-    best = candidates[0]
-    print(f"[DEBUG] Best candidate - score: {best['score']:.1f}, area: {best['area']:.0f}, "
-          f"intensity: {best['mean_intensity']:.1f}, circularity: {best['circularity']:.2f}")
-    
-    # use moments for accurate center
+    best = _pick_candidate(candidates, prefer_xy_local=prefer_xy_local)
+    if best is None:
+        return None, None, None
     M = cv2.moments(best['contour'])
     if M["m00"] != 0:
-        cx = int(M["m10"] / M["m00"])
-        cy = int(M["m01"] / M["m00"])
+        cx_int = int(M["m10"] / M["m00"])
+        cy_int = int(M["m01"] / M["m00"])
     else:
         x, y, w_box, h_box = cv2.boundingRect(best['contour'])
-        cx = x + w_box // 2
-        cy = y + h_box // 2
-    
-    # get bounding box
+        cx_int = x + w_box // 2
+        cy_int = y + h_box // 2
+
+    sub_cx, sub_cy = _subpixel_center(best['contour'], (cx_int, cy_int))
+
     x, y, w_box, h_box = cv2.boundingRect(best['contour'])
-    
-    # convert to full frame coords (matching the wider ROI offsets)
-    full_cx = cx + int(w*0.25)
-    full_cy = cy + int(h*0.3)
 
-    print(f"[DEBUG] SUCCESS - Pupil detected at ({full_cx}, {full_cy})")
-    print("-" * 60)
+    full_cx = int(round(sub_cx + roi_offset_x))
+    full_cy = int(round(sub_cy + roi_offset_y))
 
-    return (full_cx, full_cy), (cx, cy), (w_box, h_box)
+    return (full_cx, full_cy), (int(sub_cx), int(sub_cy)), (w_box, h_box)
+
+
+def _preprocess_roi(gray, window=None):
+    """
+    Crop ROI, remove reflections, enhance contrast, blur.
+    If `window` is given as (x0, y0, x1, y1) in full-frame coords, use that
+    rectangle (clamped) instead of the default centered ROI. Returns
+    (roi_raw, roi_processed, roi_offset_x, roi_offset_y).
+    """
+    h, w = gray.shape
+    if window is None:
+        roi_offset_x = int(w * 0.25)
+        roi_offset_y = int(h * 0.3)
+        roi = gray[int(h * 0.3):int(h * 0.75), int(w * 0.25):int(w * 0.75)]
+    else:
+        x0, y0, x1, y1 = window
+        x0 = max(0, int(x0)); y0 = max(0, int(y0))
+        x1 = min(w, int(x1)); y1 = min(h, int(y1))
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return _preprocess_roi(gray, window=None)
+        roi_offset_x = x0
+        roi_offset_y = y0
+        roi = gray[y0:y1, x0:x1]
+
+    cleaned = _remove_reflections_fast(roi)
+    enhanced = _enhance_contrast(cleaned)
+    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
+
+    return roi, blurred, roi_offset_x, roi_offset_y
+
+
+def detect_pupil_contour(frame):
+    """Pupil detection using darkest region with size filtering. No debug prints."""
+    if frame is None:
+        return None, None, None
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    roi_raw, roi_processed, roi_offset_x, roi_offset_y = _preprocess_roi(gray)
+
+    roi_area = roi_raw.shape[0] * roi_raw.shape[1]
+    candidates = _find_candidates_fast(roi_processed, roi_raw, roi_area)
+
+    if not candidates:
+        return None, None, None
+
+    return _extract_best(candidates, roi_offset_x, roi_offset_y)
 
 
 def detect_pupil_contour_candidates(frame):
     """
-    pupil detection that returns ALL scored candidates (sorted best-to-worst)
+    Pupil detection that returns ALL scored candidates (sorted best-to-worst)
     plus the roi offset so callers can draw contours in full-frame coords.
 
-    returns dict with keys:
+    Returns dict with keys:
         pupil_center  - (x, y) in full-frame coords or None
         roi_center    - (x, y) in roi-local coords or None
         bbox          - (w, h) of best contour or None
-        candidates    - list of dicts sorted by score descending, each with:
-                        contour, score, mean_intensity, area
+        candidates    - list of dicts sorted by score descending
         roi_offset_x  - x offset to convert roi coords → frame coords
         roi_offset_y  - y offset to convert roi coords → frame coords
     """
@@ -234,29 +296,11 @@ def detect_pupil_contour_candidates(frame):
     if frame is None:
         return empty
 
-    # convert to grayscale
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    roi_raw, roi_processed, roi_offset_x, roi_offset_y = _preprocess_roi(gray)
 
-    # crop roi — wider region (matches detect_pupil_contour)
-    h, w = gray.shape
-    roi_offset_x = int(w * 0.25)
-    roi_offset_y = int(h * 0.3)
-    roi = gray[int(h * 0.3):int(h * 0.75), int(w * 0.25):int(w * 0.75)]
-
-    # remove specular reflections
-    cleaned = _remove_reflections(roi)
-
-    # enhance contrast
-    enhanced = _enhance_contrast(cleaned)
-
-    # blur
-    blurred = cv2.GaussianBlur(enhanced, (5, 5), 0)
-
-    roi_h, roi_w = roi.shape
-    roi_area = roi_h * roi_w
-
-    # find candidates using multi-threshold approach
-    candidates = _find_candidates(blurred, roi, roi_area)
+    roi_area = roi_raw.shape[0] * roi_raw.shape[1]
+    candidates = _find_candidates_fast(roi_processed, roi_raw, roi_area)
 
     result = {
         'candidates': candidates,
@@ -267,24 +311,255 @@ def detect_pupil_contour_candidates(frame):
         'bbox': None,
     }
 
-    if candidates:
-        best = candidates[0]
-        M = cv2.moments(best['contour'])
-        if M["m00"] != 0:
-            cx = int(M["m10"] / M["m00"])
-            cy = int(M["m01"] / M["m00"])
-        else:
-            x, y, w_box, h_box = cv2.boundingRect(best['contour'])
-            cx = x + w_box // 2
-            cy = y + h_box // 2
-
-        x, y, w_box, h_box = cv2.boundingRect(best['contour'])
-
-        full_cx = cx + roi_offset_x
-        full_cy = cy + roi_offset_y
-
-        result['pupil_center'] = (full_cx, full_cy)
-        result['roi_center'] = (cx, cy)
-        result['bbox'] = (w_box, h_box)
+    pupil_center, roi_center, bbox = _extract_best(candidates, roi_offset_x, roi_offset_y)
+    if pupil_center is not None:
+        result['pupil_center'] = pupil_center
+        result['roi_center'] = roi_center
+        result['bbox'] = bbox
 
     return result
+
+
+# ── stateful tracking + smoothing ───────────────────────────────────────
+
+
+def _candidate_confidence(cand, roi_area):
+    """Map a raw candidate score into a [0,1] confidence."""
+    darkness = max(0.0, (255.0 - cand['mean_intensity'])) / 255.0
+    circ = max(0.0, min(1.0, cand['circularity']))
+    area_frac = cand['area'] / max(1.0, roi_area)
+    # pupil typically occupies 1–15% of the search ROI
+    area_score = 1.0 - min(1.0, abs(area_frac - 0.05) / 0.10)
+    area_score = max(0.0, area_score)
+    return 0.5 * darkness + 0.35 * circ + 0.15 * area_score
+
+
+class PupilTracker:
+    """
+    Stateful pupil detector with temporal prior, jump rejection, and a
+    confidence score per detection.
+
+    Strategy:
+      * If we have a recent confident detection, search a small window
+        around it first. This is faster and avoids being distracted by
+        eyebrow/lash blobs elsewhere in the frame.
+      * Fall back to the full default ROI on miss, or after several
+        consecutive low-confidence frames.
+      * Reject sudden jumps unless they persist for `jump_confirm_frames`
+        frames in a row (handles the case where the pupil really did
+        snap to a new location, e.g. saccade).
+    """
+
+    def __init__(
+        self,
+        search_half_w=80,
+        search_half_h=60,
+        max_jump_px=120,
+        jump_confirm_frames=2,
+        miss_reset_frames=4,
+        min_confidence=0.22,
+    ):
+        self.search_half_w = int(search_half_w)
+        self.search_half_h = int(search_half_h)
+        self.max_jump_px = float(max_jump_px)
+        self.jump_confirm_frames = int(jump_confirm_frames)
+        self.miss_reset_frames = int(miss_reset_frames)
+        self.min_confidence = float(min_confidence)
+
+        self.last_center = None  # (x, y) full-frame
+        self.last_bbox = None
+        self.last_confidence = 0.0
+        self.consecutive_misses = 0
+        self._pending_jump = None  # (x, y)
+        self._pending_count = 0
+
+    def reset(self):
+        self.last_center = None
+        self.last_bbox = None
+        self.last_confidence = 0.0
+        self.consecutive_misses = 0
+        self._pending_jump = None
+        self._pending_count = 0
+
+    def _detect_in_window(self, gray, window, prefer_full_xy=None):
+        roi_raw, roi_processed, ox, oy = _preprocess_roi(gray, window=window)
+        roi_area = roi_raw.shape[0] * roi_raw.shape[1]
+        cands = _find_candidates_fast(roi_processed, roi_raw, roi_area)
+        if not cands:
+            return None, 0.0, None
+        # convert preferred reference (full-frame) to roi-local if given
+        prefer_local = None
+        if prefer_full_xy is not None:
+            prefer_local = (prefer_full_xy[0] - ox, prefer_full_xy[1] - oy)
+        center, _roi_center, bbox = _extract_best(cands, ox, oy, prefer_xy_local=prefer_local)
+        # confidence: report on the candidate we actually picked (which may
+        # not be cands[0] when proximity tie-breaking kicks in).
+        chosen = _pick_candidate(cands, prefer_xy_local=prefer_local)
+        conf = _candidate_confidence(chosen if chosen is not None else cands[0], roi_area)
+        return center, conf, bbox
+
+    def update(self, frame):
+        """
+        Run detection on `frame`. Returns dict:
+          center: (x, y) in full-frame coords, or None
+          confidence: float in [0, 1]
+          bbox: (w, h) or None
+          source: 'window' | 'full' | 'hold' | 'miss'
+        """
+        if frame is None:
+            return {'center': None, 'confidence': 0.0, 'bbox': None, 'source': 'miss'}
+
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY) if frame.ndim == 3 else frame
+
+        # 1. try a tight window around the last known position; bias the
+        #    in-window candidate selection toward last_center so we don't
+        #    swap to a similar-scoring but spatially-different blob.
+        center = None
+        conf = 0.0
+        bbox = None
+        source = 'full'
+        if self.last_center is not None:
+            lx, ly = self.last_center
+            window = (
+                lx - self.search_half_w, ly - self.search_half_h,
+                lx + self.search_half_w, ly + self.search_half_h,
+            )
+            center, conf, bbox = self._detect_in_window(
+                gray, window, prefer_full_xy=self.last_center
+            )
+            if center is not None and conf >= self.min_confidence:
+                source = 'window'
+
+        # 2. fall back to full default ROI on miss / low confidence
+        if center is None or conf < self.min_confidence:
+            full_center, full_conf, full_bbox = self._detect_in_window(
+                gray, None, prefer_full_xy=self.last_center
+            )
+            if full_center is not None and full_conf >= conf:
+                center, conf, bbox = full_center, full_conf, full_bbox
+                source = 'full'
+
+        # 3. handle the no-detection case
+        if center is None or conf < self.min_confidence:
+            self.consecutive_misses += 1
+            if self.consecutive_misses >= self.miss_reset_frames:
+                self.reset()
+                return {'center': None, 'confidence': 0.0, 'bbox': None, 'source': 'miss'}
+            # short-term hold: keep returning last position so the cursor
+            # doesn't snap to centre on a single dropped frame
+            if self.last_center is not None:
+                return {
+                    'center': self.last_center,
+                    'confidence': self.last_confidence * 0.5,
+                    'bbox': self.last_bbox,
+                    'source': 'hold',
+                }
+            return {'center': None, 'confidence': 0.0, 'bbox': None, 'source': 'miss'}
+
+        # 4. jump rejection: confirm large jumps over multiple frames
+        if self.last_center is not None:
+            dx = center[0] - self.last_center[0]
+            dy = center[1] - self.last_center[1]
+            dist = math.sqrt(dx * dx + dy * dy)
+            if dist > self.max_jump_px:
+                if self._pending_jump is None:
+                    self._pending_jump = center
+                    self._pending_count = 1
+                else:
+                    pdx = center[0] - self._pending_jump[0]
+                    pdy = center[1] - self._pending_jump[1]
+                    if math.sqrt(pdx * pdx + pdy * pdy) <= self.max_jump_px:
+                        self._pending_count += 1
+                        self._pending_jump = center
+                    else:
+                        # jump target itself jumped — restart confirmation
+                        self._pending_jump = center
+                        self._pending_count = 1
+
+                if self._pending_count < self.jump_confirm_frames:
+                    # not confirmed yet — hold last
+                    return {
+                        'center': self.last_center,
+                        'confidence': self.last_confidence * 0.7,
+                        'bbox': self.last_bbox,
+                        'source': 'hold',
+                    }
+                # confirmed — accept the new position
+                self._pending_jump = None
+                self._pending_count = 0
+            else:
+                self._pending_jump = None
+                self._pending_count = 0
+
+        self.last_center = center
+        self.last_bbox = bbox
+        self.last_confidence = conf
+        self.consecutive_misses = 0
+
+        return {'center': center, 'confidence': conf, 'bbox': bbox, 'source': source}
+
+
+class OneEuroFilter:
+    """
+    1€ filter (Casiez et al. 2012). Adapts smoothing to motion speed:
+      * heavy smoothing when slow / still → kills jitter on fixations
+      * light smoothing when fast → minimal lag during saccades
+
+    `mincutoff` (Hz) sets the floor; `beta` controls how quickly we open
+    the cutoff with speed. Sensible defaults for a ~30 fps pixel signal.
+    """
+
+    def __init__(self, mincutoff=2.5, beta=0.15, dcutoff=1.5):
+        self.mincutoff = float(mincutoff)
+        self.beta = float(beta)
+        self.dcutoff = float(dcutoff)
+        self._x_prev = None
+        self._dx_prev = 0.0
+        self._t_prev = None
+
+    @staticmethod
+    def _alpha(cutoff, dt):
+        tau = 1.0 / (2.0 * math.pi * cutoff)
+        return 1.0 / (1.0 + tau / dt)
+
+    def reset(self):
+        self._x_prev = None
+        self._dx_prev = 0.0
+        self._t_prev = None
+
+    def __call__(self, x, t=None):
+        if t is None:
+            t = time.monotonic()
+        if self._t_prev is None or self._x_prev is None:
+            self._t_prev = t
+            self._x_prev = float(x)
+            self._dx_prev = 0.0
+            return float(x)
+        dt = max(1e-6, t - self._t_prev)
+        dx = (float(x) - self._x_prev) / dt
+        a_d = self._alpha(self.dcutoff, dt)
+        dx_hat = a_d * dx + (1.0 - a_d) * self._dx_prev
+        cutoff = self.mincutoff + self.beta * abs(dx_hat)
+        a = self._alpha(cutoff, dt)
+        x_hat = a * float(x) + (1.0 - a) * self._x_prev
+        self._x_prev = x_hat
+        self._dx_prev = dx_hat
+        self._t_prev = t
+        return x_hat
+
+
+class OneEuroFilter2D:
+    """Convenience wrapper: independent 1€ filters on x and y."""
+
+    def __init__(self, mincutoff=2.5, beta=0.15, dcutoff=1.5):
+        self._fx = OneEuroFilter(mincutoff, beta, dcutoff)
+        self._fy = OneEuroFilter(mincutoff, beta, dcutoff)
+
+    def reset(self):
+        self._fx.reset()
+        self._fy.reset()
+
+    def __call__(self, xy, t=None):
+        if t is None:
+            t = time.monotonic()
+        return self._fx(xy[0], t), self._fy(xy[1], t)

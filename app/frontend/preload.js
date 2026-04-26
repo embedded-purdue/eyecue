@@ -16,7 +16,4 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowControl: (action) => {
     ipcRenderer.send('window-control', action);
   },
-  openCalibration: (mode) => {
-    ipcRenderer.send('open-calibration', mode || 'full');
-  },
 });

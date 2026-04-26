@@ -137,8 +137,7 @@ metrics saved automatically to json/csv on exit.
 - ✅ gaze angle calculation
 - ✅ metrics collection system
 - ✅ video export functionality
-- ⏳ cursor control integration (next step)
-- ⏳ calibration system (next step)
+- ✅ cursor control integration
 - ⏳ blink detection for clicking (next step)
 
 ## demo videos

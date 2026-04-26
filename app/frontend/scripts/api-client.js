@@ -52,6 +52,5 @@
     bypassRuntime: (payload = {}) => request('/runtime/bypass', { method: 'POST', body: payload }),
     setTracking: (enabled) => request('/runtime/tracking', { method: 'POST', body: { enabled: Boolean(enabled) } }),
     stopRuntime: () => request('/runtime/stop', { method: 'POST', body: {} }),
-    getCalibrationState: () => request('/runtime/calibrate/state'),
   };
 })();

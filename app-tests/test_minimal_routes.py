@@ -163,6 +163,22 @@ class MinimalRoutesTests(unittest.TestCase):
         self.assertTrue(response.get_json()["ok"])
         set_tracking_mock.assert_called_once_with(True)
 
+    def test_calibration_routes_removed(self):
+        requests = [
+            ("get", "/runtime/calibrate/state"),
+            ("post", "/runtime/calibrate/start"),
+            ("post", "/runtime/calibrate/record"),
+            ("post", "/runtime/calibrate/finish"),
+            ("post", "/runtime/calibrate/cancel"),
+            ("post", "/runtime/calibrate/quick"),
+            ("get", "/runtime/gaze/current"),
+        ]
+
+        for method, path in requests:
+            with self.subTest(path=path):
+                response = getattr(self.client, method)(path, json={})
+                self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,6 +15,17 @@ class _FakeSerialContext:
         return None
 
 
+class _FakePyAutoGui:
+    def __init__(self):
+        self.moves = []
+
+    def size(self):
+        return 1000, 800
+
+    def moveTo(self, x, y):
+        self.moves.append((x, y))
+
+
 class PipelineControllerHandshakeTests(unittest.TestCase):
     @patch("app.services.pipeline_controller.threading.Thread")
     def test_connect_bypass_skips_required_field_validation(self, thread_cls_mock):
@@ -197,6 +208,19 @@ class PipelineControllerHandshakeTests(unittest.TestCase):
         self.assertEqual(lines, ["READY pico", "still waiting"])
         self.assertEqual(send_mock.call_count, 2)
         self.assertEqual(read_mock.call_count, 2)
+
+    def test_apply_cursor_uses_incoming_cursor_without_calibration(self):
+        controller = PipelineController()
+        fake_pyautogui = _FakePyAutoGui()
+
+        self.assertFalse(hasattr(controller, "_calibration"))
+
+        with patch("app.services.pipeline_controller.pyautogui", fake_pyautogui), patch(
+            "app.services.pipeline_controller.SERIAL_DEBUG", False
+        ):
+            controller._apply_cursor({"x": 123, "y": 456, "confidence": 0.8})
+
+        self.assertEqual(fake_pyautogui.moves, [(123, 456)])
 
 
 if __name__ == "__main__":
